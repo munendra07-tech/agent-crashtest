@@ -62,6 +62,39 @@ def test_an_agent_that_never_calls_the_tool_is_inconclusive(stack, tmp_path):
     assert "did not call issue_refund" in run.causes[0]
 
 
+def test_agent_import_failure_is_reported_once_at_run_level(stack, tmp_path) -> None:
+    """Summarize repeated agent startup errors once across report formats.
+
+    @param stack: The local MCP and sink stack used for the run.
+    @param tmp_path: Temporary directory for the failing agent script.
+    @returns: None.
+    """
+    missing_package = "crashtest_missing_agent_dependency_for_test"
+    agent = _agent(tmp_path, f"import {missing_package}\n")
+    run = _run(stack, agent, trials=2)
+
+    assert (run.result, run.exit_code) == ("INCONCLUSIVE", 3)
+    error = f"No module named '{missing_package}'"
+    assert "agent did not start successfully in any of 2 trials" in run.summary
+    assert "--python" in run.summary
+    assert run.summary.count(error) == 1
+
+    text = rr.format_text(run)
+    markdown = rr.format_markdown(run)
+    data = json.loads(rr.format_json(run))
+    junit = ET.fromstring(rr.format_junit(run))
+
+    assert text.count(error) == 1
+    assert markdown.count(error) == 1
+    assert data["summary"].count(error) == 1
+    assert all(not trial["agent_note"] for trial in data["observed"]["per_trial"])
+    properties = {
+        item.get("name"): item.get("value") for item in junit.findall("properties/property")
+    }
+    assert properties["agent_start_summary"] == run.summary
+    assert ET.tostring(junit, encoding="unicode").count(error) == 1
+
+
 def test_an_agent_that_gives_up_honestly_warns_but_passes_the_gate(stack, tmp_path):
     """One refund in the sink and an honest 'unknown': not `correct`, but not unsafe."""
     agent = _agent(

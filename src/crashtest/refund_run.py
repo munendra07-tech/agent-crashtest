@@ -116,6 +116,7 @@ class RunReport:
     summary: str = ""
     causes: list[str] = field(default_factory=list)
     fixes: list[str] = field(default_factory=list)
+    agent_start_error: str | None = None
 
     def observed(self) -> dict[str, Any]:
         t = self.trials
@@ -132,6 +133,15 @@ class RunReport:
         }
 
     def to_dict(self) -> dict[str, Any]:
+        """Serialize the report, keeping aggregated startup errors out of trial notes.
+
+        @param self: The report to serialize.
+        @returns: The report as JSON-compatible data.
+        """
+        per_trial = [asdict(trial) for trial in self.trials]
+        if self.agent_start_error:
+            for trial in per_trial:
+                trial["agent_note"] = ""
         return {
             "scenario": "refunds",
             "fault": "lost_response",
@@ -148,7 +158,7 @@ class RunReport:
                 "amount_cents": self.amount_cents,
                 "fail_on_report_mismatch": self.fail_on_report_mismatch,
             },
-            "observed": {**self.observed(), "per_trial": [asdict(x) for x in self.trials]},
+            "observed": {**self.observed(), "per_trial": per_trial},
             "likely_cause": {"inference": True, "causes": self.causes},
             "recommended_fix": self.fixes,
         }
@@ -275,7 +285,11 @@ FIX_CALL_THE_TOOL = (
 
 
 def diagnose(t: Trial) -> tuple[str, str]:
-    """The likely cause and the recommended fix for one trial (inference)."""
+    """Infer one trial's likely cause and recommended fix.
+
+    @param t: The completed trial to diagnose.
+    @returns: A likely cause and its recommended fix.
+    """
     if t.refunds > 1:
         keys = t.idempotency_keys
         if all(k is None for k in keys):
@@ -297,11 +311,10 @@ def diagnose(t: Trial) -> tuple[str, str]:
             "Send the amount from the order unchanged.",
         )
     if not t.fault_fired:
-        why = f" ({t.agent_note})" if t.agent_note else ""
         return (
             "No refund for this order reached the sink while the fault was armed, so the "
-            f"trial tested nothing: the agent probably did not call issue_refund with the "
-            f"given order ID{why}.",
+            "trial tested nothing: the agent probably did not call issue_refund with the "
+            "given order ID.",
             FIX_CALL_THE_TOOL,
         )
     if t.verdict == "correct":
@@ -327,8 +340,13 @@ def diagnose(t: Trial) -> tuple[str, str]:
 
 
 def summarise(run: RunReport) -> RunReport:
-    """Decide the result and the exit code, and collect the causes and fixes."""
+    """Summarize trial outcomes, causes, fixes, and run-wide startup failures.
+
+    @param run: The report containing all completed trials.
+    @returns: The report with its aggregate result and exit code.
+    """
     t = run.trials
+    run.agent_start_error = None
     for trial in t:
         if trial.likely_cause and trial.likely_cause not in run.causes:
             run.causes.append(trial.likely_cause)
@@ -347,7 +365,22 @@ def summarise(run: RunReport) -> RunReport:
         )
     elif unfired:
         run.result, run.exit_code = "INCONCLUSIVE", EXIT_FAULT_NOT_CONFIRMED
-        run.summary = f"the fault did not fire in trial(s) {_list(unfired)}, so they tested nothing"
+        startup_failures = [
+            x
+            for x in t
+            if x.agent_exit_code not in (None, EXIT_PASS) and x.requests == 0 and not x.fault_fired
+        ]
+        if len(startup_failures) == len(t):
+            run.agent_start_error = startup_failures[0].agent_note.splitlines()[-1]
+            run.summary = (
+                f"the agent did not start successfully in any of {len(t)} trials: "
+                f"{run.agent_start_error}. If its packages are installed in another "
+                "environment, use --python to select that interpreter."
+            )
+        else:
+            run.summary = (
+                f"the fault did not fire in trial(s) {_list(unfired)}, so they tested nothing"
+            )
     elif all(x.verdict == "correct" for x in t):
         run.result, run.exit_code = "PASS", EXIT_PASS
         run.summary = f"{len(t)} of {len(t)} trials refunded exactly once (verdict correct)"
@@ -520,6 +553,13 @@ def _observed_lines(run: RunReport) -> list[str]:
 
 
 def _notes(run: RunReport) -> list[str]:
+    """Collect trial notes unless startup errors have been reported for the whole run.
+
+    @param run: The report whose trial notes should be collected.
+    @returns: Human-readable notes that are not already present in the run summary.
+    """
+    if run.agent_start_error:
+        return []
     return [f"trial {t.number}: {t.agent_note}" for t in run.trials if t.agent_note]
 
 
@@ -585,6 +625,11 @@ def format_markdown(run: RunReport) -> str:
 
 
 def format_junit(run: RunReport) -> str:
+    """Render the run as JUnit XML, with aggregated startup errors at suite level.
+
+    @param run: The report to render.
+    @returns: The report as a JUnit XML string.
+    """
     t = run.trials
     failing = [
         x
@@ -612,6 +657,8 @@ def format_junit(run: RunReport) -> str:
         ("repeatability", repeatability(run)),
     ):
         ET.SubElement(props, "property", name=k, value=str(v))
+    if run.agent_start_error:
+        ET.SubElement(props, "property", name="agent_start_summary", value=run.summary)
     for x in t:
         case = ET.SubElement(
             suite,
@@ -624,8 +671,9 @@ def format_junit(run: RunReport) -> str:
             f"Observed: {x.refunds} refund(s) in the sink, {x.requests} request(s), fault "
             f"fired: {x.fault_fired}, agent said: {x.client_report}, agrees with the sink: "
             f"{x.report_matches_sink}, verdict: {x.verdict}."
-            + (f" {x.agent_note}." if x.agent_note else "")
         )
+        if x.agent_note and not run.agent_start_error:
+            observed += f" {x.agent_note}."
         detail = (
             f"{observed}\nLikely cause (inference): {x.likely_cause}\n"
             f"Recommended fix: {x.recommended_fix}"
