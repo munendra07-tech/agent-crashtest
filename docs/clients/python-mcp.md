@@ -15,7 +15,7 @@ MCP_URL = "http://127.0.0.1:PORT/mcp"  # printed by `crashtest serve`
 async def main() -> None:
     async with Client(MCP_URL) as client:
         tools = await client.list_tools()
-        print([t.name for t in tools.tools])  # ['issue_refund']
+        print(sorted(t.name for t in tools.tools))  # ['check_refund_status', 'issue_refund']
         result = await client.call_tool(
             "issue_refund",
             {"order_id": "ord-1", "amount_cents": 2500, "idempotency_key": "refund-ord-1"},

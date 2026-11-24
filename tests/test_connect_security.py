@@ -194,7 +194,7 @@ async def test_stdio_serves_the_same_tool(stack, sink, order_id):
         result = await client.call_tool(
             "issue_refund", {"order_id": order_id, "amount_cents": 2500}
         )
-    assert [t.name for t in tools.tools] == ["issue_refund"]
+    assert {t.name for t in tools.tools} == {"issue_refund", "check_refund_status"}
     assert not result.is_error
     truth = (await sink.get("/refunds", params={"order_id": order_id})).json()
     assert len(truth["refunds"]) == 1

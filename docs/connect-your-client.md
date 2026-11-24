@@ -65,7 +65,7 @@ It starts PostgreSQL, the sink and the MCP server on free ports, and prints them
 
 ## 2. The tool
 
-The MCP server has one tool, `issue_refund`:
+The MCP server has two tools. `issue_refund` makes the refund:
 
 | Argument | Type | Meaning |
 |---|---|---|
@@ -74,6 +74,8 @@ The MCP server has one tool, `issue_refund`:
 | `idempotency_key` | string, optional | A caller-chosen key for this one refund. A call that repeats the key gets the stored result back instead of a second refund |
 
 The server adds no deduplication of its own. It passes the key to the sink, which enforces it in the database.
+
+`check_refund_status(order_id)` is read-only: it returns `{"exists": true}` or `{"exists": false}`, from the sink's rows, and changes nothing (no refund, no request-log entry). An agent can use it to look a refund up after a timeout instead of retrying blindly; [`examples/check_status_agent.py`](../examples/check_status_agent.py) does that.
 
 ## 3. Run one trial
 

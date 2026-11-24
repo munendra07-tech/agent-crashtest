@@ -66,4 +66,4 @@ Status: the Inspector commands above are **not yet verified**. The controller it
 
 - Runs live in the controller's memory: restarting it forgets them (the sink keeps every row).
 - The controller does not run your agent. You run it, on the order ID it gives you, and say what it reported; `crashtest run` is the way to have the harness run an agent script itself.
-- One scenario so far, `refunds` (version 1); `create_test_run` lists the scenarios it knows.
+- Two scenarios: `refunds` (version 1) and `refunds-cut-before-request` (version 1); `create_test_run` lists them, and for the cut its `agent_mcp_url` is the proxy's, which the controller keeps running while it runs. See [scenarios.md](scenarios.md).

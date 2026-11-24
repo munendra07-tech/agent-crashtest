@@ -10,9 +10,13 @@
     crashtest run refunds --agent naive|stable_key|PATH [--trials 5]
                                         start the stack, run an agent through the
                                         lost-response fault, print a PASS/FAIL report
-    crashtest selftest                  check the harness itself with both example agents
+    crashtest run refunds-cut-before-request --agent ...
+                                        the same, with the connection cut before the
+                                        request reaches the server (experiment 008)
+    crashtest selftest [--scenario S]   check the harness itself with both example agents
 
-The MCP server has one tool, `issue_refund(order_id, amount_cents, idempotency_key?)`.
+The MCP server has two tools: `issue_refund(order_id, amount_cents, idempotency_key?)`
+and the read-only `check_refund_status(order_id)`, which says whether a refund exists.
 It is a test double: it writes a row to a local PostgreSQL database and moves no
 real money. With a fault armed, the sink commits the refund and then holds its
 response past your client's timeout, so your client never hears back. What your
@@ -40,7 +44,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from crashtest import control_token
+from crashtest import control_token, scenarios
 from crashtest.checker import (
     Report,
     SubjectStatus,
@@ -121,7 +125,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
             f"Sink:                         {stack.sink_url}\n"
             f"Control token:                in {STATE_FILE} (the sink requires it on "
             "/control/*; do not give it to the agent)\n\n"
-            "Point your MCP client at the MCP server; its tool is issue_refund.\n"
+            "Point your MCP client at the MCP server; its tools are issue_refund and the\n"
+            "read-only check_refund_status.\n"
             "In another terminal, in this folder:\n"
             "  crashtest arm ORDER_ID      the next refund for ORDER_ID loses its response\n"
             "  crashtest verdict ORDER_ID  how many refunds the sink holds, and the verdict\n\n"
@@ -355,13 +360,14 @@ def cmd_selftest(args: argparse.Namespace) -> int:
                     sink_url=stack.sink_url,
                     trials=args.trials,
                     control_token=stack.control_token,
+                    scenario=args.scenario,
                 )
     except rr.SetupError as exc:
         print(f"crashtest: {exc}", file=sys.stderr)
         return rr.EXIT_ENVIRONMENT
-    problems = rr.check_controls(runs["naive"], runs["stable_key"])
+    problems = rr.check_controls(runs["naive"], runs["stable_key"], args.scenario)
     if not problems:
-        print(rr.SELFTEST_PASSED)
+        print(rr.SELFTEST_PASSED if args.scenario == "refunds" else rr.SELFTEST_CUT_PASSED)
         return 0
     print("selftest FAILED: the harness, not your agent, is at fault on this machine.")
     for problem in problems:
@@ -376,7 +382,8 @@ def cmd_run(args: argparse.Namespace) -> int:
     try:
         if args.trials < 1:
             raise rr.SetupError("--trials must be at least 1")
-        if args.client_timeout >= args.fault_delay:
+        lost_response = args.scenario == "refunds"
+        if lost_response and args.client_timeout >= args.fault_delay:
             raise rr.SetupError(
                 "--client-timeout must be shorter than --fault-delay, or no response is lost"
             )
@@ -395,6 +402,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 amount_cents=args.amount_cents,
                 fail_on_report_mismatch=args.fail_on_report_mismatch,
                 control_token=stack.control_token,
+                scenario=args.scenario,
             )
     except rr.SetupError as exc:
         print(f"crashtest: {exc}", file=sys.stderr)
@@ -439,7 +447,8 @@ def build_parser() -> argparse.ArgumentParser:
         "mcp",
         help="serve the refund MCP server over stdio (for clients that launch a command)",
         description=(
-            "Serve the same refund MCP server as `crashtest serve` (one tool, issue_refund) "
+            "Serve the same refund MCP server as `crashtest serve` (issue_refund and the "
+            "read-only check_refund_status) "
             "over stdio, on a sink that is already running: the one in --sink-url, "
             "CRASHTEST_SINK_URL, or the stack file `crashtest serve` wrote. Exits with code "
             "2 and a message on stderr when no sink answers."
@@ -502,7 +511,13 @@ def build_parser() -> argparse.ArgumentParser:
             "--fail-on-report-mismatch is given (then 1)."
         ),
     )
-    run.add_argument("scenario", choices=("refunds",), help="the scenario: refunds")
+    run.add_argument(
+        "scenario",
+        choices=scenarios.names(),
+        help="refunds (the reference: a lost response after the commit) or "
+        "refunds-cut-before-request (the connection is cut before the request reaches the "
+        "server; experiment 008). See docs/scenarios.md",
+    )
     run.add_argument(
         "--agent",
         required=True,
@@ -533,7 +548,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--fault-delay",
         type=float,
         default=5.0,
-        help="seconds the first refund's response is held (default 5)",
+        help="seconds the first refund's response is held (default 5; refunds only)",
     )
     run.add_argument("--amount-cents", type=int, default=DEFAULT_AMOUNT_CENTS)
     run.add_argument(
@@ -552,6 +567,13 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     selftest.add_argument("--trials", type=int, default=3, help="trials per control (default 3)")
+    selftest.add_argument(
+        "--scenario",
+        choices=scenarios.names(),
+        default="refunds",
+        help="whose controls to run (default refunds: the naive agent must FAIL, the "
+        "stable-key one PASS; refunds-cut-before-request: both must PASS, the cut confirmed)",
+    )
     selftest.add_argument(
         "--data-dir", default=".crashtest-pgdata", help="where PostgreSQL keeps its data"
     )

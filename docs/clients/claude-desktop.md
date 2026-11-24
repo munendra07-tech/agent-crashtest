@@ -29,7 +29,7 @@ Claude Desktop launches local MCP servers as commands over stdio, so it uses `cr
    }
    ```
 
-5. Restart Claude Desktop. The tool `issue_refund` should appear under the server `crashtest-refunds`. If the stack is not running, the server exits at once with "no sink is running" (Claude Desktop shows it in its MCP log).
+5. Restart Claude Desktop. The tools `issue_refund` and `check_refund_status` (read-only) should appear under the server `crashtest-refunds`. If the stack is not running, the server exits at once with "no sink is running" (Claude Desktop shows it in its MCP log).
 6. Arm a fault from your terminal (`crashtest arm ORDER_ID --delay 30`), ask Claude to refund that order, then run `crashtest verdict ORDER_ID --report done|unknown|not_done|none`, choosing what Claude told you.
 
 Notes:

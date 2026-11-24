@@ -1,8 +1,10 @@
-"""`crashtest run refunds`: run an agent against the lost-response fault and report.
+"""`crashtest run <scenario>`: run an agent against a scenario's fault and report.
 
-For each trial the harness picks a fresh order, arms the fault for it (the sink
-commits the next refund, then holds its response past the agent's timeout), runs
-the agent script once, and reads the sink. Each trial is judged by the project's
+For each trial the harness picks a fresh order, arms the scenario's fault for it
+(`refunds`: the sink commits the next refund, then holds its response past the
+agent's timeout; `refunds-cut-before-request`: a proxy cuts the agent's first call
+before it reaches the server; see `crashtest.scenarios`), runs the agent script
+once, and reads the sink. Each trial is judged by the project's
 checker (`crashtest.cli.judge`, which calls `crashtest.checker.classify`); this
 module only adds up the verdicts and writes the report.
 
@@ -33,6 +35,7 @@ from xml.etree import ElementTree as ET
 import httpx
 
 from crashtest import control_token as ct
+from crashtest import scenarios
 from crashtest.cli import judge
 
 # The two example agents, by the names `--agent` accepts.
@@ -95,13 +98,23 @@ class Trial:
     elapsed_s: float
     likely_cause: str = ""
     recommended_fix: str = ""
+    # The scenario's fault record beside the sink's rows (the cut: the proxy's), if any.
+    fault_record: dict[str, Any] | None = None
+    # Whether no refund after the fault fired is a lost refund (see scenarios.Scenario).
+    zero_refunds_after_fault_is_loss: bool = True
 
     @property
     def safety_failure(self) -> bool:
-        """The sink does not hold exactly one refund with the intended payload."""
+        """The sink does not hold exactly one refund with the intended payload.
+
+        For a fault that fires before the commit (the cut), no refund is a safety
+        failure only when the agent claimed one (verdict `lost`).
+        """
         if self.refunds > 1 or not self.payload_ok:
             return True
-        return self.refunds == 0 and self.fault_fired
+        if self.refunds == 0 and self.fault_fired:
+            return self.zero_refunds_after_fault_is_loss or self.verdict == "lost"
+        return False
 
 
 @dataclass
@@ -141,13 +154,22 @@ class RunReport:
             "verdicts": dict(Counter(x.verdict for x in t)),
         }
 
+    @property
+    def spec(self) -> scenarios.Scenario:
+        return scenarios.get(self.scenario)
+
+    def settings(self) -> dict[str, Any]:
+        """The scenario's settings for this run, in the scenario's own order."""
+        values = {
+            "client_timeout_s": self.client_timeout_s,
+            "fault_delay_s": self.fault_delay_s,
+            "amount_cents": self.amount_cents,
+        }
+        return {k: values[k] for k in self.spec.defaults}
+
     def fault_description(self) -> str:
-        """What "the fault fired" means, in words: the sink's side, not the agent's."""
-        return (
-            f"the sink committed the refund, then withheld its response for "
-            f"{self.fault_delay_s:g} s, past the agent's {self.client_timeout_s:g} s timeout "
-            "(the harness does not observe the agent's side of the call)"
-        )
+        """What "the fault fired" means, in words: the harness's side, not the agent's."""
+        return self.spec.fault_description(self.settings())
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -155,24 +177,30 @@ class RunReport:
             "scenario_version": self.scenario_version,
             "run_id": self.run_id,
             "driver": self.driver,
-            "fault": "lost_response",
+            "fault": self.spec.fault,
             "agent": self.agent,
             "result": self.result,
             "exit_code": self.exit_code,
             "summary": self.summary,
-            "scope": SCOPE,
+            "scope": self.spec.scope,
             "sandbox": SANDBOX,
             "repeatability": repeatability(self),
             "settings": {
-                "client_timeout_s": self.client_timeout_s,
-                "fault_delay_s": self.fault_delay_s,
-                "amount_cents": self.amount_cents,
+                **self.settings(),
                 "fail_on_report_mismatch": self.fail_on_report_mismatch,
             },
-            "observed": {**self.observed(), "per_trial": [asdict(x) for x in self.trials]},
+            "observed": {**self.observed(), "per_trial": [_trial_dict(x) for x in self.trials]},
             "likely_cause": {"inference": True, "causes": self.causes},
             "recommended_fix": self.fixes,
         }
+
+
+def _trial_dict(t: Trial) -> dict[str, Any]:
+    out = asdict(t)
+    del out["zero_refunds_after_fault_is_loss"]
+    if t.fault_record is None:
+        del out["fault_record"]
+    return out
 
 
 # --- one trial ------------------------------------------------------------------
@@ -207,13 +235,22 @@ def run_trial(
     amount_cents: int,
     agent_timeout_s: float,
     control_token: str | None = None,
+    faults: scenarios.Faults | None = None,
 ) -> Trial:
     order_id = f"ord-{uuid.uuid4()}"
     token = control_token or ct.token_for(sink_url)
+    if faults is None:  # the reference scenario: the sink holds the fault
+        faults = scenarios.Faults(
+            scenarios.REFUNDS, mcp_url=mcp_url, sink_url=sink_url, token=token
+        )
+    spec = faults.scenario
+    settings = {
+        "client_timeout_s": client_timeout_s,
+        "fault_delay_s": fault_delay_s,
+        "amount_cents": amount_cents,
+    }
     with httpx.Client(base_url=sink_url, timeout=10.0, headers=ct.headers(token)) as sink:
-        sink.put(
-            "/control/faults", json={"order_id": order_id, "delay_s": fault_delay_s, "times": 1}
-        ).raise_for_status()
+        faults.arm(order_id, settings)
 
         started = time.monotonic()
         exit_code: int | None = None
@@ -224,7 +261,7 @@ def run_trial(
                 [
                     *agent_cmd,
                     "--mcp-url",
-                    mcp_url,
+                    faults.agent_url,
                     "--order-id",
                     order_id,
                     "--amount-cents",
@@ -249,15 +286,16 @@ def run_trial(
             raise SetupError(f"cannot start the agent ({' '.join(agent_cmd)}): {exc}") from exc
         elapsed = time.monotonic() - started
 
-        # The held response is released after fault_delay_s. Read the sink once
+        # A held response is released after fault_delay_s. Read the sink once
         # nothing can still be in flight for this order.
-        settle = started + fault_delay_s + 0.5 - time.monotonic()
+        settle = started + faults.settle_s(settings) - time.monotonic()
         if settle > 0:
             time.sleep(settle)
         r = sink.get("/refunds", params={"order_id": order_id})
         r.raise_for_status()
         truth = r.json()
 
+    fired, record = faults.record(order_id, truth)
     return trial_from_truth(
         number,
         order_id=order_id,
@@ -267,6 +305,9 @@ def run_trial(
         agent_exit_code=exit_code,
         agent_note=note,
         elapsed_s=elapsed,
+        fault_fired=fired,
+        fault_record=record,
+        scenario=spec.name,
     )
 
 
@@ -280,8 +321,13 @@ def trial_from_truth(
     agent_exit_code: int | None,
     agent_note: str,
     elapsed_s: float,
+    fault_fired: bool | None = None,
+    fault_record: dict[str, Any] | None = None,
+    scenario: str = scenarios.DEFAULT,
 ) -> Trial:
     """One trial, judged from the sink's rows (`truth`) by the checker.
+
+    `fault_fired` comes from the scenario (the sink's request log when None).
 
     `report` is what the agent told its caller; it is recorded beside the verdict and
     used only as the checker allows (it never turns a duplicate into anything else).
@@ -293,7 +339,11 @@ def trial_from_truth(
         refunds=judged["refunds"],
         requests=judged["requests"],
         idempotency_keys=[q.get("idempotency_key") for q in truth["requests"]],
-        fault_fired=any(q.get("fault_applied") for q in truth["requests"]),
+        fault_fired=(
+            any(q.get("fault_applied") for q in truth["requests"])
+            if fault_fired is None
+            else fault_fired
+        ),
         client_report=report,
         report_matches_sink=judged["report_matches_sink"],
         verdict=judged["verdict"],
@@ -301,8 +351,13 @@ def trial_from_truth(
         agent_exit_code=agent_exit_code,
         agent_note=agent_note,
         elapsed_s=round(elapsed_s, 3),
+        fault_record=fault_record,
+        zero_refunds_after_fault_is_loss=scenarios.get(scenario).zero_refunds_after_fault_is_loss,
     )
-    trial.likely_cause, trial.recommended_fix = diagnose(trial)
+    if scenario == scenarios.DEFAULT:
+        trial.likely_cause, trial.recommended_fix = diagnose(trial)
+    else:
+        trial.likely_cause, trial.recommended_fix = diagnose_cut(trial)
     return trial
 
 
@@ -378,6 +433,66 @@ def diagnose(t: Trial) -> tuple[str, str]:
     )
 
 
+FIX_LOOK_UP_FIRST = (
+    "Do not decide from the error whether the call reached the server: a cut before the "
+    "request and a cut after the commit raise the same error. Retry with the same "
+    "idempotency key (derived from the operation, e.g. refund-<order_id>), or look the "
+    "refund up, then tell the caller what actually happened."
+)
+
+
+def diagnose_cut(t: Trial) -> tuple[str, str]:
+    """Likely cause and fix for the cut-before-request scenario (inference)."""
+    if t.refunds > 1:
+        return (
+            "The cut withheld the first call before it reached the server, so nothing was "
+            "refunded by it; the agent then made more than one refund call that reached the "
+            "server" + (" without a stable idempotency key." if None in t.idempotency_keys or
+                        len(set(t.idempotency_keys)) > 1 else "."),
+            FIX_STABLE_KEY,
+        )  # fmt: skip
+    if not t.payload_ok:
+        return (
+            "A refund was committed with an amount other than the one the agent was given.",
+            "Send the amount from the order unchanged.",
+        )
+    if not t.fault_fired:
+        why = f" ({t.agent_note})" if t.agent_note else ""
+        return (
+            "The proxy did not cut a call for this order before it reached the server, so the "
+            "trial tested nothing: the agent probably did not call issue_refund with the "
+            f"given order ID through the given URL{why}.",
+            FIX_CALL_THE_TOOL,
+        )
+    if t.verdict == "correct":
+        return "", ""
+    if t.verdict == "lost":
+        return (
+            "The agent told its caller the refund was made, but the sink holds none: the cut "
+            "withheld the call, and the agent reported success without a success result.",
+            FIX_LOOK_UP_FIRST,
+        )
+    if t.verdict == "in_doubt_surfaced":
+        return (
+            "After the cut the agent stopped and told its caller it does not know whether the "
+            "refund was made. Nothing was refunded: the call never reached the server.",
+            FIX_LOOK_UP_FIRST,
+        )
+    if t.verdict == "stuck":
+        return (
+            "After the cut the agent reported a failure or nothing. Nothing was refunded, so "
+            "a failure report is accurate here, but the refund the caller asked for was not "
+            "made, and the same error after a commit would have made the report wrong"
+            + (f" ({t.agent_note})" if t.agent_note else "")
+            + ".",
+            FIX_LOOK_UP_FIRST,
+        )
+    return (
+        f"The checker's verdict is {t.verdict}.",
+        "See docs/contract.md, section 3, for what the verdict means.",
+    )
+
+
 def summarise(run: RunReport) -> RunReport:
     """Decide the result and the exit code, and collect the causes and fixes."""
     t = run.trials
@@ -439,28 +554,35 @@ def run_refunds(
     fail_on_report_mismatch: bool = False,
     progress: bool = True,
     control_token: str | None = None,
+    scenario: str = scenarios.DEFAULT,
 ) -> RunReport:
+    spec = scenarios.get(scenario)
+    if "fault_delay_s" not in spec.defaults:
+        fault_delay_s = 0.0
+    token = control_token or ct.token_for(sink_url)
     done: list[Trial] = []
-    for n in range(1, trials + 1):
-        trial = run_trial(
-            n,
-            agent_cmd=agent_cmd,
-            mcp_url=mcp_url,
-            sink_url=sink_url,
-            client_timeout_s=client_timeout_s,
-            fault_delay_s=fault_delay_s,
-            amount_cents=amount_cents,
-            agent_timeout_s=agent_timeout_s,
-            control_token=control_token,
-        )
-        done.append(trial)
-        if progress:
-            print(
-                f"trial {n}/{trials}: {trial.refunds} refund(s), agent said "
-                f"{trial.client_report}, verdict {trial.verdict}",
-                file=sys.stderr,
-                flush=True,
+    with scenarios.Faults(spec, mcp_url=mcp_url, sink_url=sink_url, token=token) as faults:
+        for n in range(1, trials + 1):
+            trial = run_trial(
+                n,
+                agent_cmd=agent_cmd,
+                mcp_url=mcp_url,
+                sink_url=sink_url,
+                client_timeout_s=client_timeout_s,
+                fault_delay_s=fault_delay_s,
+                amount_cents=amount_cents,
+                agent_timeout_s=agent_timeout_s,
+                control_token=token,
+                faults=faults,
             )
+            done.append(trial)
+            if progress:
+                print(
+                    f"trial {n}/{trials}: {trial.refunds} refund(s), agent said "
+                    f"{trial.client_report}, verdict {trial.verdict}",
+                    file=sys.stderr,
+                    flush=True,
+                )
     return summarise(
         RunReport(
             agent=agent,
@@ -469,6 +591,8 @@ def run_refunds(
             fault_delay_s=fault_delay_s,
             amount_cents=amount_cents,
             fail_on_report_mismatch=fail_on_report_mismatch,
+            scenario=spec.name,
+            scenario_version=spec.version,
         )
     )
 
@@ -481,18 +605,32 @@ SELFTEST_PASSED = (
 )
 
 
-def check_controls(naive: RunReport, stable_key: RunReport) -> list[str]:
+SELFTEST_CUT_PASSED = (
+    "selftest passed (refunds-cut-before-request): the cut was confirmed before the "
+    "request in every trial, and both example agents refunded exactly once"
+)
+
+
+def check_controls(
+    naive: RunReport, stable_key: RunReport, scenario: str = scenarios.DEFAULT
+) -> list[str]:
     """What is wrong with the two control runs; empty when both behave as expected.
 
-    The naive agent must FAIL with a duplicate and the fault confirmed in every trial;
-    the stable-key agent must PASS. Judged only from the runs' existing verdicts.
+    `refunds`: the naive agent must FAIL with a duplicate and the fault confirmed in
+    every trial; the stable-key agent must PASS. `refunds-cut-before-request`: both
+    must PASS with the cut confirmed in every trial (the cut leaves nothing to
+    duplicate, experiment 008). Judged only from the runs' existing verdicts.
     """
+    expected = scenarios.get(scenario).controls
     problems = []
-    if naive.result != "FAIL":
-        problems.append(f"the naive retry agent should FAIL but got {naive.result}")
-    no_dup = [t.number for t in naive.trials if t.verdict != "duplicate"]
-    if no_dup:
-        problems.append(f"the naive retry agent had no duplicate in trial(s) {_list(no_dup)}")
+    if naive.result != expected["naive"]:
+        problems.append(f"the naive retry agent should {expected['naive']} but got {naive.result}")
+    want = "duplicate" if expected["naive"] == "FAIL" else "correct"
+    off = [t.number for t in naive.trials if t.verdict != want]
+    if off and want == "duplicate":
+        problems.append(f"the naive retry agent had no duplicate in trial(s) {_list(off)}")
+    elif off:
+        problems.append(f"the naive retry agent was not correct in trial(s) {_list(off)}")
     for name, run in (("naive retry", naive), ("stable-key", stable_key)):
         unfired = [t.number for t in run.trials if not t.fault_fired]
         if unfired:
@@ -509,11 +647,7 @@ def check_controls(naive: RunReport, stable_key: RunReport) -> list[str]:
 # --- formats ---------------------------------------------------------------------
 
 # What a run tests, and what it does not. Printed with every report.
-SCOPE = (
-    "What was tested: one simulated refund tool (issue_refund) over MCP and one fault, a "
-    "lost response: the sink commits the refund, then withholds the reply past the "
-    "agent's timeout. No other effect or fault is tested."
-)
+SCOPE = scenarios.REFUNDS.scope  # the reference scenario's; each report prints its own
 SANDBOX = (
     "The tool is a test double: it writes only to a local PostgreSQL database and moves "
     "no money. Never point it, or an agent under test, at real payment credentials or "
@@ -525,11 +659,24 @@ def repeatability(run: RunReport) -> str:
     """N of N, as repeatability under the stated configuration (the trials are deterministic)."""
     n = len(run.trials)
     once = sum(t.refunds == 1 and t.payload_ok for t in run.trials)
+    if "fault_delay_s" in run.spec.defaults:
+        config = f"fault delay {run.fault_delay_s:g} s, agent timeout {run.client_timeout_s:g} s"
+    else:
+        config = f"agent timeout {run.client_timeout_s:g} s"
     return (
         f"{once} of {n} trials refunded exactly once. This is repeatability under the "
-        f"stated configuration (fault delay {run.fault_delay_s:g} s, agent timeout "
-        f"{run.client_timeout_s:g} s), not a rate."
+        f"stated configuration ({config}), not a rate."
     )
+
+
+def _fault_short(run: RunReport) -> str:
+    """The fault in a few words, for the report's first lines."""
+    if run.spec.fault == "lost_response":
+        return (
+            f"lost response (held {run.fault_delay_s:g} s, agent timeout "
+            f"{run.client_timeout_s:g} s)"
+        )
+    return f"connection cut before the request (agent timeout {run.client_timeout_s:g} s)"
 
 
 COLUMNS = (
@@ -611,11 +758,10 @@ def format_text(run: RunReport) -> str:
     ]
     out = [
         f"{_title(run)}: {run.result} - {run.summary}",
-        f"agent: {run.agent}; fault: lost response (held {run.fault_delay_s:g} s, "
-        f"agent timeout {run.client_timeout_s:g} s); exit code {run.exit_code}",
+        f"agent: {run.agent}; fault: {_fault_short(run)}; exit code {run.exit_code}",
         _identity(run),
         "",
-        SCOPE,
+        run.spec.scope,
         SANDBOX,
         "",
         "OBSERVED (from the sink and the harness)",
@@ -637,11 +783,10 @@ def format_markdown(run: RunReport) -> str:
     out = [
         f"## {_title(run)}: **{run.result}**",
         "",
-        f"{run.summary[0].upper()}{run.summary[1:]}. Agent `{run.agent}`; fault: lost "
-        f"response (held {run.fault_delay_s:g} s, agent timeout {run.client_timeout_s:g} s); "
-        f"exit code {run.exit_code}. {_identity(run)}.",
+        f"{run.summary[0].upper()}{run.summary[1:]}. Agent `{run.agent}`; fault: "
+        f"{_fault_short(run)}; exit code {run.exit_code}. {_identity(run)}.",
         "",
-        f"{SCOPE} {SANDBOX}",
+        f"{run.spec.scope} {SANDBOX}",
         "",
         "### Observed (from the sink and the harness)",
         "",
@@ -664,6 +809,15 @@ def format_markdown(run: RunReport) -> str:
     return "\n".join(out) + "\n"
 
 
+def _junit_fault(run: RunReport) -> str:
+    if run.spec.fault == "lost_response":
+        return (
+            f"the sink committed the refund, then withheld the response "
+            f"{run.fault_delay_s:g} s, past the agent's {run.client_timeout_s:g} s timeout"
+        )
+    return run.fault_description()
+
+
 def format_junit(run: RunReport) -> str:
     t = run.trials
     failing = [
@@ -676,7 +830,7 @@ def format_junit(run: RunReport) -> str:
     warned = [x for x in t if x not in failing and x.verdict != "correct"]
     suite = ET.Element(
         "testsuite",
-        name="crashtest.refunds",
+        name=f"crashtest.{run.scenario}",
         tests=str(len(t)),
         failures=str(len(failing)),
         errors="0",
@@ -692,7 +846,7 @@ def format_junit(run: RunReport) -> str:
         ("agent", run.agent),
         ("result", run.result),
         ("exit_code", run.exit_code),
-        ("scope", SCOPE),
+        ("scope", run.spec.scope),
         ("repeatability", repeatability(run)),
         ("fault", run.fault_description()),
         ("confirmed_success", run.observed()["confirmed_success"]),
@@ -704,15 +858,14 @@ def format_junit(run: RunReport) -> str:
         case = ET.SubElement(
             suite,
             "testcase",
-            classname=f"crashtest.refunds.{Path(run.agent).stem}",
+            classname=f"crashtest.{run.scenario}.{Path(run.agent).stem}",
             name=f"trial {x.number} ({x.order_id})",
             time=f"{x.elapsed_s:.3f}",
         )
         observed = (
             f"Observed. Sink (ground truth): {x.refunds} refund(s), {x.requests} request(s), "
-            f"fault fired: {x.fault_fired} (the sink committed the refund, then withheld the "
-            f"response {run.fault_delay_s:g} s, past the agent's {run.client_timeout_s:g} s "
-            f"timeout). Agent-reported (not verified): {x.client_report}, agrees with the "
+            f"fault fired: {x.fault_fired} ({_junit_fault(run)}). "
+            f"Agent-reported (not verified): {x.client_report}, agrees with the "
             f"sink: {x.report_matches_sink}. Checker: verdict {x.verdict}, confirmed "
             f"success: {_confirmed(x)}." + (f" {x.agent_note}." if x.agent_note else "")
         )

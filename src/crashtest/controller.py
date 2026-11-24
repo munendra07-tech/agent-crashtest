@@ -37,6 +37,7 @@ from mcp.server.mcpserver import MCPServer
 
 from crashtest import control_token as ct
 from crashtest import refund_run as rr
+from crashtest import scenarios
 
 CONTROLLER_TOOLS = (
     "create_test_run",
@@ -48,28 +49,7 @@ CONTROLLER_TOOLS = (
 CLIENT_REPORTS = (*rr.REPORTS, "none")
 
 
-@dataclass(frozen=True)
-class Scenario:
-    """The scenario a run tests: its name, version and default settings."""
-
-    name: str
-    version: str
-    defaults: dict[str, Any]
-
-    def fault_description(self, settings: dict[str, Any]) -> str:
-        return (
-            f"the next refund for this order commits, then the sink withholds its response "
-            f"for {settings['fault_delay_s']:g} s (past a {settings['client_timeout_s']:g} s "
-            "timeout)"
-        )
-
-
-REFUNDS = Scenario(
-    name="refunds",
-    version="1",
-    defaults={"client_timeout_s": 2.0, "fault_delay_s": 5.0, "amount_cents": 2500},
-)
-SCENARIOS = {REFUNDS.name: REFUNDS}
+SCENARIOS = scenarios.REGISTRY
 # The sink releases a held response this long after its delay; then nothing is in flight.
 SETTLE_S = 0.5
 
@@ -81,7 +61,7 @@ class ControllerError(ValueError):
 @dataclass
 class ControllerRun:
     run_id: str
-    scenario: Scenario
+    scenario: scenarios.Scenario
     orders: list[str]
     settings: dict[str, Any]
     agent: str
@@ -102,6 +82,25 @@ class Controller:
         self.mcp_url = mcp_url
         self.token = token
         self.runs: dict[str, ControllerRun] = {}
+        # A scenario whose fault is not held by the sink (the cut: a proxy in front of
+        # the MCP server) is started on first use and kept for the controller's life.
+        self._faults: dict[str, scenarios.Faults] = {}
+
+    def faults(self, scenario: scenarios.Scenario) -> scenarios.Faults:
+        if scenario.name not in self._faults:
+            self._faults[scenario.name] = scenarios.Faults(
+                scenario, mcp_url=self.mcp_url, sink_url=self.sink_url, token=self.token
+            ).__enter__()
+        return self._faults[scenario.name]
+
+    def close(self) -> None:
+        for faults in self._faults.values():
+            faults.__exit__(None, None, None)
+        self._faults.clear()
+
+    def agent_url(self, run: ControllerRun) -> str:
+        """The URL the agent under test must use for this run (the proxy's, for the cut)."""
+        return self.faults(run.scenario).agent_url
 
     def _client(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(
@@ -120,7 +119,7 @@ class Controller:
         return run.orders[trial - 1]
 
     def create_run(
-        self, *, scenario: str = REFUNDS.name, trials: int = 1, agent: str = "manual"
+        self, *, scenario: str = scenarios.DEFAULT, trials: int = 1, agent: str = "manual"
     ) -> dict[str, Any]:
         found = SCENARIOS.get(scenario)
         if found is None:
@@ -148,7 +147,10 @@ class Controller:
             if name not in run.settings:
                 raise ControllerError(f"unknown setting {name!r}")
             run.settings[name] = type(run.settings[name])(value)
-        if run.settings["client_timeout_s"] >= run.settings["fault_delay_s"]:
+        if (
+            "fault_delay_s" in run.settings
+            and run.settings["client_timeout_s"] >= run.settings["fault_delay_s"]
+        ):
             raise ControllerError(
                 "client_timeout_s must be shorter than fault_delay_s, or no response is lost"
             )
@@ -161,16 +163,19 @@ class Controller:
         order_id = self._trial(run, trial)
         if trial in run.armed:
             raise ControllerError(f"the fault for trial {trial} is already armed")
-        async with self._client() as sink:
-            r = await sink.put(
-                "/control/faults",
-                json={
-                    "order_id": order_id,
-                    "delay_s": run.settings["fault_delay_s"],
-                    "times": 1,
-                },
-            )
-            r.raise_for_status()
+        if run.scenario.fault == "lost_response":
+            async with self._client() as sink:
+                r = await sink.put(
+                    "/control/faults",
+                    json={
+                        "order_id": order_id,
+                        "delay_s": run.settings["fault_delay_s"],
+                        "times": 1,
+                    },
+                )
+                r.raise_for_status()
+        else:
+            self.faults(run.scenario).arm(order_id, run.settings)
         run.armed[trial] = time.time()
         return {
             "run_id": run.run_id,
@@ -180,7 +185,7 @@ class Controller:
             "next": (
                 f"have the agent call issue_refund for order {order_id} with amount_cents "
                 f"{run.settings['amount_cents']} and a timeout of "
-                f"{run.settings['client_timeout_s']:g} s, on {self.mcp_url}"
+                f"{run.settings['client_timeout_s']:g} s, on {self.agent_url(run)}"
             ),
         }
 
@@ -202,7 +207,7 @@ class Controller:
                         "armed": n in run.armed,
                         "refunds_in_sink": len(truth["refunds"]),
                         "requests_in_sink": len(truth["requests"]),
-                        "fault_fired": any(q.get("fault_applied") for q in truth["requests"]),
+                        "fault_fired": self.faults(run.scenario).record(order_id, truth)[0],
                     }
                 )
         return {**self._describe(run), "trials": trials}
@@ -221,7 +226,7 @@ class Controller:
                 )
         if unarmed := [n for n in range(1, len(run.orders) + 1) if n not in run.armed]:
             raise ControllerError(f"arm the fault for trial(s) {rr._list(unarmed)} first")
-        delay = run.settings["fault_delay_s"]
+        delay = run.settings.get("fault_delay_s", 0.0)
         trials = []
         async with self._client() as sink:
             for n, order_id in enumerate(run.orders, start=1):
@@ -235,6 +240,7 @@ class Controller:
                     if wait > 0:
                         await asyncio.sleep(wait)
                         truth = await self._truth(sink, order_id)
+                fired_ok, record = self.faults(run.scenario).record(order_id, truth)
                 trials.append(
                     rr.trial_from_truth(
                         n,
@@ -245,6 +251,9 @@ class Controller:
                         agent_exit_code=None,
                         agent_note="",
                         elapsed_s=0.0,
+                        fault_fired=fired_ok,
+                        fault_record=record,
+                        scenario=run.scenario.name,
                     )
                 )
         result = rr.summarise(
@@ -283,7 +292,7 @@ class Controller:
             "created_at": run.created_at,
             "agent": run.agent,
             "settings": dict(run.settings),
-            "agent_mcp_url": self.mcp_url,
+            "agent_mcp_url": self.agent_url(run),
             "trials": [
                 {"trial": n, "order_id": o, "armed": n in run.armed}
                 for n, o in enumerate(run.orders, start=1)
@@ -297,7 +306,7 @@ def build_server(controller: Controller) -> MCPServer:
 
     @server.tool()
     def create_test_run(
-        scenario: str = REFUNDS.name, trials: int = 1, agent: str = "manual"
+        scenario: str = scenarios.DEFAULT, trials: int = 1, agent: str = "manual"
     ) -> dict[str, Any]:
         """Create a test run: one fresh order ID per trial for the agent under test.
 
@@ -309,7 +318,7 @@ def build_server(controller: Controller) -> MCPServer:
         out = controller.create_run(scenario=scenario, trials=trials, agent=agent)
         return {
             **out,
-            "scenarios": [{"name": s.name, "version": s.version} for s in SCENARIOS.values()],
+            "scenarios": scenarios.describe(controller_only=True),
         }
 
     @server.tool()

@@ -100,6 +100,8 @@ crashtest run refunds --agent path/to/my_agent.py --trials 10
 
 `--python PATH` runs your script with another interpreter, such as your agent's own virtual environment.
 
+[`examples/check_status_agent.py`](examples/check_status_agent.py) shows the other safe pattern: after a timeout it looks the refund up with the read-only tool `check_refund_status(order_id)` before retrying.
+
 ### Reports and exit codes
 
 `--format text|json|markdown|junit` picks the report's format (`markdown` suits a PR comment, `junit` a CI test report); `--output FILE` writes it to a file, and `--junit-file FILE` and `--markdown-file FILE` write a second copy. Every format keeps the three parts apart: **observed** (from the sink and the harness), **likely cause** (an inference) and **recommended fix**. Each trial's verdict comes from the project's checker, as defined in the [contract](docs/contract.md); PASS means every trial's verdict is `correct`.
@@ -174,7 +176,15 @@ The tool's arguments, the idempotency key and the same steps with `curl` and Pyt
 
 `crashtest serve` serves the tool over Streamable HTTP at the URL it prints. For clients that launch a command instead, `crashtest mcp --stdio --stack-file <path to .crashtest-stack.json>` serves the same tool over stdio on the running sink (or `--sink-url URL`); without a running sink it says so on stderr and exits 2. Both transports run the same server code against the same sink, and CI checks that the same agent gets the same verdict over both. Copy-ready setup for the Python `mcp` client, the MCP Inspector, Claude Desktop, Claude Code, VS Code and Cursor, each marked with whether it has been verified: [docs/clients/](docs/clients/README.md).
 
-**Security.** The agent under test sees only the simulated tool. Arming faults, resetting and judging stay with you: the sink's `/control/*` endpoints require a control token that `serve` stores in `.crashtest-stack.json` (never sent over MCP, never given to an agent that `crashtest run` starts), while the read-only ground truth (`GET /refunds`) stays open. An agent that can read that file can read the token, so keep the agent out of that folder. Everything listens on `127.0.0.1`, and the HTTP MCP server refuses requests whose `Host` or `Origin` header names any other host (DNS-rebinding protection).
+**Security.** The agent under test sees only the simulated tools (`issue_refund`, and the read-only `check_refund_status` lookup). Arming faults, resetting and judging stay with you: the sink's `/control/*` endpoints require a control token that `serve` stores in `.crashtest-stack.json` (never sent over MCP, never given to an agent that `crashtest run` starts), while the read-only ground truth (`GET /refunds`) stays open. An agent that can read that file can read the token, so keep the agent out of that folder. Everything listens on `127.0.0.1`, and the HTTP MCP server refuses requests whose `Host` or `Origin` header names any other host (DNS-rebinding protection).
+
+### A second scenario: the connection cut before the request
+
+```powershell
+crashtest run refunds-cut-before-request --agent naive
+```
+
+A proxy between your agent and the MCP server cuts the agent's first call before it reaches the server, so nothing is refunded and even a naive retry refunds once (PASS). The point is the error: your agent sees the same disconnect as when the cut comes after the commit, where the naive retry refunds twice (experiment 008). It cannot tell the two apart from the error, so only a stable idempotency key (or looking the refund up) is safe in both; run both scenarios. An agent that reports "done" without a success result gets `lost` (FAIL). Ground truth: the sink's rows plus the proxy's record that the call was withheld. `crashtest selftest --scenario refunds-cut-before-request` checks the harness for it. Details and limitations: [docs/scenarios.md](docs/scenarios.md).
 
 ### Drive tests from your own MCP client: the test controller
 
@@ -183,7 +193,7 @@ The tool's arguments, the idempotency key and the same steps with `curl` and Pyt
 ## Limitations
 
 - **Client guides.** Only the Python `mcp` client (stdio and HTTP) and the MCP Inspector's CLI are verified in CI; the Claude Desktop, Claude Code, VS Code, Cursor and Inspector web-UI steps follow those clients' documentation and have not been run yet ([docs/clients/](docs/clients/README.md)). `crashtest serve` picks a free port each time, so an HTTP client's configuration must be updated after a restart.
-- **One scenario.** A refund through one MCP tool, with one fault: the first response is lost after the refund commits. Connection cuts, crashes of the agent's own process and other effects (bookings, inventory) are not in `crashtest run` yet.
+- **Two scenarios.** A refund through one MCP tool, with one of two faults: the first response is lost after the refund commits (`refunds`, the reference), or the connection is cut before the request reaches the server (`refunds-cut-before-request`, from experiment 008). Cuts mid-stream or during the effect, crashes of the agent's own process and other effects (bookings, inventory) are not in `crashtest run` yet. See [docs/scenarios.md](docs/scenarios.md) for each scenario's ground truth and limitations.
 - **The agent runs as a script**, once per order, with the arguments above. An agent that needs a model, credentials or a long-running process has to be wrapped in such a script.
 - **A test double, not a payment provider.** A PASS says your agent's retries are safe against this test double, a sink that enforces idempotency keys in its database; it says nothing about whether your real provider does.
 - **Repeatability, not a rate.** "5 of 5 trials" says the outcome repeated under the stated configuration (fault delay, agent timeout); it is not a probability and carries no confidence interval. An agent whose behaviour depends on timing or on a model may need more trials, or other timings.

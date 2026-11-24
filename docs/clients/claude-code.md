@@ -26,6 +26,6 @@ Use the URL `crashtest serve` printed. The port changes each time `serve` starts
 claude mcp list
 ```
 
-should show `crashtest-refunds`. In a session, `/mcp` shows its status and the tool `issue_refund`. Arm a fault from another terminal (`crashtest arm ORDER_ID --delay 30`), ask for the refund, then judge it with `crashtest verdict ORDER_ID --report ...`.
+should show `crashtest-refunds`. In a session, `/mcp` shows its status and the tools `issue_refund` and `check_refund_status` (read-only). Arm a fault from another terminal (`crashtest arm ORDER_ID --delay 30`), ask for the refund, then judge it with `crashtest verdict ORDER_ID --report ...`.
 
 Keep the stack file out of the project Claude Code is working in, or Claude Code's file tools can read the control token. Running `crashtest serve` in a separate folder avoids that.
