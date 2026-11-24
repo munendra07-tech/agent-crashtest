@@ -176,7 +176,7 @@ The tool's arguments, the idempotency key and the same steps with `curl` and Pyt
 - **The agent runs as a script**, once per order, with the arguments above. An agent that needs a model, credentials or a long-running process has to be wrapped in such a script.
 - **A test double, not a payment provider.** A PASS says your agent's retries are safe against this test double, a sink that enforces idempotency keys in its database; it says nothing about whether your real provider does.
 - **Repeatability, not a rate.** "5 of 5 trials" says the outcome repeated under the stated configuration (fault delay, agent timeout); it is not a probability and carries no confidence interval. An agent whose behaviour depends on timing or on a model may need more trials, or other timings.
-- **Tested on Windows and Ubuntu with Python 3.12**; macOS has not been tested. The Action runs your agent with its own Python 3.12, which has the `mcp` client; whether packages your agent needs can be installed into that Python in an earlier step has not been tested yet.
+- **Platforms, as CI shows.** On every push CI installs the package into a fresh virtual environment (not editable), runs `crashtest selftest` and both example agents on Ubuntu, Windows and macOS (GitHub's `ubuntu-latest`, `windows-latest` and `macos-latest` runners, Python 3.12): all three passed ([run](https://github.com/munendra07-tech/agent-crashtest/actions/runs/45485719103)). The full test suite runs in CI on Ubuntu only; on Windows it is run by hand. Other macOS versions, chips and Python versions are not tested. On Windows, `pgserver` (PostgreSQL) cannot create a data directory under a path with characters outside the system's ANSI code page; see "Run it on Windows". The Action runs your agent with its own Python 3.12, which has the `mcp` client; whether packages your agent needs can be installed into that Python in an earlier step has not been tested yet.
 
 ## Roadmap
 
@@ -303,6 +303,8 @@ More: [docs/architecture.md](docs/architecture.md), [docs/contract.md](docs/cont
 
 Requires Python 3.12. Keep the project at a short path such as `D:\agent-crashtest`; Windows path-length limits break virtual environments in deeply nested folders.
 
+**If PostgreSQL fails to start with "could not create directory ... Invalid argument", "The current directory is invalid" or `postgres.exe` not found:** keep the folder that holds the data directory (`--data-dir`, default `.crashtest-pgdata` in the current folder) and the virtual environment on a path made only of characters in your system's ANSI code page, in practice plain ASCII (for example `C:\work\crashtest`, not under a user profile whose name contains other characters). The cause is upstream: `pgserver`'s bundled PostgreSQL `initdb` does not handle such paths on Windows; it is not specific to this project. For the test suite, pass `pytest --basetemp=C:\tmp\ct` (or set `TEMP`) to an ASCII path.
+
 Set up once:
 
 ```powershell
@@ -369,7 +371,7 @@ docker compose down -v
 
 ### On Linux or macOS
 
-The same steps, in a POSIX shell. CI installs and runs the tests this way on Ubuntu (Python 3.12) on every push, and the experiment workflow (`.github/workflows/experiment.yml`) has run the experiments on Ubuntu; macOS has not been tested.
+The same steps, in a POSIX shell. CI installs and runs the tests this way on Ubuntu (Python 3.12) on every push, and the experiment workflow (`.github/workflows/experiment.yml`) has run the experiments on Ubuntu. On macOS, CI runs the clean install, `crashtest selftest` and both example agents (all passed on `macos-latest`); the full test suite and the experiments have not been run on macOS.
 
 ```sh
 python3.12 -m venv .venv
