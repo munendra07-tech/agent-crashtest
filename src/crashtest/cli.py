@@ -3,6 +3,8 @@
     crashtest serve                     start the sink and the MCP server locally
     crashtest mcp --stdio               the same MCP server over stdio, for clients
                                         that launch a command (needs a running sink)
+    crashtest controller --stdio|--http a separate MCP server for you (never for the
+                                        agent): create runs, arm faults, get reports
     crashtest arm ORDER_ID [--delay 5]  make the next refund for ORDER_ID lose its response
     crashtest verdict ORDER_ID          count the refunds and judge them
     crashtest run refunds --agent naive|stable_key|PATH [--trials 5]
@@ -34,7 +36,7 @@ import sys
 import time
 from contextlib import ExitStack
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
@@ -231,6 +233,88 @@ def cmd_mcp(args: argparse.Namespace) -> int:
     return 0
 
 
+class _BearerToken:
+    """ASGI middleware: every HTTP request must carry the control token."""
+
+    def __init__(self, app: Any, token: str) -> None:
+        self.app = app
+        self.token = token
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] == "http":
+            auth = dict(scope.get("headers") or []).get(b"authorization", b"").decode("latin-1")
+            if not control_token.matches(auth, self.token):
+                from starlette.responses import PlainTextResponse
+
+                response = PlainTextResponse(
+                    "the control token is missing or wrong",
+                    status_code=401,
+                    headers={"WWW-Authenticate": control_token.SCHEME},
+                )
+                await response(scope, receive, send)
+                return
+        await self.app(scope, receive, send)
+
+
+def cmd_controller(args: argparse.Namespace) -> int:
+    """`crashtest controller`: the developer's MCP server for driving tests."""
+    from crashtest.controller import Controller, ControllerError, build_server
+
+    state_file = Path(args.stack_file) if args.stack_file else STATE_FILE
+    if not state_file.is_file() and not (args.sink_url and args.mcp_url):
+        print(
+            f"crashtest: no stack file at {state_file}; start `crashtest serve` first "
+            "(or pass --sink-url and --mcp-url, with CRASHTEST_CONTROL_TOKEN set)",
+            file=sys.stderr,
+        )
+        return 2
+    state = _read_state(state_file)
+    sink = _sink_url(args.sink_url, state_file)
+    token = control_token.token_for(sink) or state.get("control_token")
+    try:
+        controller = Controller(
+            sink_url=sink, mcp_url=args.mcp_url or state.get("mcp_url", ""), token=token
+        )
+        httpx.get(f"{sink}/health", timeout=5.0).raise_for_status()
+    except ControllerError as exc:
+        print(f"crashtest: {exc}", file=sys.stderr)
+        return 2
+    except httpx.HTTPError as exc:
+        print(f"crashtest: no sink is running at {sink} ({exc})", file=sys.stderr)
+        return 2
+    server = build_server(controller)
+    if args.stdio:
+        server.run("stdio")
+        return 0
+
+    import uvicorn
+
+    from crashtest.experiment.local_stack import _free_port
+    from crashtest.refund_mcp.server import transport_security
+
+    port = args.port or _free_port()
+    app = server.streamable_http_app(
+        stateless_http=True,
+        json_response=True,
+        transport_security=transport_security(),
+        host="127.0.0.1",
+    )
+    print(
+        f"Test controller (streamable HTTP): http://127.0.0.1:{port}/mcp\n"
+        "Clients must send the control token from the stack file as "
+        "'Authorization: Bearer <token>'. This server is for you, never for the agent.",
+        file=sys.stderr,
+        flush=True,
+    )
+    uvicorn.run(
+        _BearerToken(app, controller.token),
+        host="127.0.0.1",
+        port=port,
+        log_level="warning",
+    )
+    return 0
+
+
 def _start_stack(data_dir: str, cleanup: ExitStack) -> Stack:
     """Start the local stack for `run` and `selftest`; a failure is a SetupError (exit 2)."""
     from crashtest import refund_run as rr
@@ -368,6 +452,31 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"the {STATE_FILE} that `crashtest serve` wrote (default: in this folder)",
     )
     mcp.set_defaults(func=cmd_mcp)
+
+    controller = sub.add_parser(
+        "controller",
+        help="a separate MCP server for you (never the agent) to create runs, arm faults "
+        "and get reports",
+        description=(
+            "Serve the test controller: an MCP server with create_test_run, "
+            "configure_scenario, arm_fault, get_run_status and get_test_report, on the "
+            "stack `crashtest serve` started (read from its stack file). It has no reset or "
+            "delete tools; verdicts come from the sink through the project's checker. Over "
+            "HTTP it listens on 127.0.0.1 and requires the control token from its clients. "
+            "Never configure it into the agent under test. See docs/controller.md."
+        ),
+    )
+    how = controller.add_mutually_exclusive_group(required=True)
+    how.add_argument("--stdio", action="store_true", help="serve over stdio")
+    how.add_argument("--http", action="store_true", help="serve Streamable HTTP on 127.0.0.1")
+    controller.add_argument("--port", type=int, default=0, help="HTTP port (default: a free one)")
+    controller.add_argument(
+        "--stack-file",
+        help=f"the {STATE_FILE} that `crashtest serve` wrote (default: in this folder)",
+    )
+    controller.add_argument("--sink-url", help="the running sink's URL")
+    controller.add_argument("--mcp-url", help="the agent-facing MCP server's URL")
+    controller.set_defaults(func=cmd_controller)
 
     verdict = sub.add_parser("verdict", help="count an order's refunds and judge them")
     verdict.add_argument("order_id")

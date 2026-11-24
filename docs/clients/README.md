@@ -31,7 +31,7 @@ Copy-ready setup for connecting an MCP client to agent-crashtest's simulated ref
 
 ## Keep the agent away from the controls
 
-- The MCP server exposes only the simulated tool. Arming faults, reading verdicts and resetting are done by you, with the `crashtest` command, never by the agent.
+- The MCP server exposes only the simulated tool. Arming faults, reading verdicts and resetting are done by you, with the `crashtest` command or the [test controller](../controller.md) (a separate MCP server for your own client), never by the agent. Never add the controller to the agent's configuration.
 - The sink's `/control/*` endpoints require the control token, which `serve` keeps in `.crashtest-stack.json`. The token is never sent over MCP and never given to an agent that `crashtest run` starts. An agent that can read your folder can read the file, so run the agent where it cannot, or accept that it could.
 - Everything listens on `127.0.0.1` only. The HTTP MCP server checks the `Host` and `Origin` headers (DNS-rebinding protection): requests naming any host other than `127.0.0.1`, `localhost` or `[::1]` are refused (421 for `Host`, 403 for `Origin`), so a web page in your browser cannot call it.
 - `crashtest mcp --stdio` runs on your machine with your permissions. It is the `crashtest` from your own install; the guides show its exact arguments.

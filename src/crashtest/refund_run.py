@@ -112,6 +112,11 @@ class RunReport:
     fault_delay_s: float
     amount_cents: int
     fail_on_report_mismatch: bool = False
+    # Which run this is and what drove it: `crashtest run` or the test controller.
+    run_id: str = field(default_factory=lambda: f"run-{uuid.uuid4()}")
+    scenario: str = "refunds"
+    scenario_version: str = "1"
+    driver: Literal["run", "controller"] = "run"
     result: Result = "PASS"
     exit_code: int = EXIT_PASS
     summary: str = ""
@@ -146,7 +151,10 @@ class RunReport:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "scenario": "refunds",
+            "scenario": self.scenario,
+            "scenario_version": self.scenario_version,
+            "run_id": self.run_id,
+            "driver": self.driver,
             "fault": "lost_response",
             "agent": self.agent,
             "result": self.result,
@@ -250,7 +258,34 @@ def run_trial(
         r.raise_for_status()
         truth = r.json()
 
-    report = _client_report(stdout)
+    return trial_from_truth(
+        number,
+        order_id=order_id,
+        truth=truth,
+        report=_client_report(stdout),
+        amount_cents=amount_cents,
+        agent_exit_code=exit_code,
+        agent_note=note,
+        elapsed_s=elapsed,
+    )
+
+
+def trial_from_truth(
+    number: int,
+    *,
+    order_id: str,
+    truth: dict,
+    report: str,
+    amount_cents: int,
+    agent_exit_code: int | None,
+    agent_note: str,
+    elapsed_s: float,
+) -> Trial:
+    """One trial, judged from the sink's rows (`truth`) by the checker.
+
+    `report` is what the agent told its caller; it is recorded beside the verdict and
+    used only as the checker allows (it never turns a duplicate into anything else).
+    """
     judged = judge(truth, order_id=order_id, amount_cents=amount_cents, report=report)  # type: ignore[arg-type]
     trial = Trial(
         number=number,
@@ -263,9 +298,9 @@ def run_trial(
         report_matches_sink=judged["report_matches_sink"],
         verdict=judged["verdict"],
         payload_ok=all(x.get("amount_cents") == amount_cents for x in truth["refunds"]),
-        agent_exit_code=exit_code,
-        agent_note=note,
-        elapsed_s=round(elapsed, 3),
+        agent_exit_code=agent_exit_code,
+        agent_note=agent_note,
+        elapsed_s=round(elapsed_s, 3),
     )
     trial.likely_cause, trial.recommended_fix = diagnose(trial)
     return trial
@@ -558,6 +593,15 @@ def _notes(run: RunReport) -> list[str]:
     return [f"trial {t.number}: {t.agent_note}" for t in run.trials if t.agent_note]
 
 
+def _title(run: RunReport) -> str:
+    return f"crashtest {'run' if run.driver == 'run' else 'controller'} {run.scenario}"
+
+
+def _identity(run: RunReport) -> str:
+    how = "crashtest run" if run.driver == "run" else "the test controller"
+    return f"run {run.run_id}; scenario {run.scenario} version {run.scenario_version}; via {how}"
+
+
 def format_text(run: RunReport) -> str:
     rows = [list(COLUMNS), *(_row(t) for t in run.trials)]
     widths = [max(len(r[i]) for r in rows) for i in range(len(COLUMNS))]
@@ -566,9 +610,10 @@ def format_text(run: RunReport) -> str:
         for r in rows
     ]
     out = [
-        f"crashtest run refunds: {run.result} - {run.summary}",
+        f"{_title(run)}: {run.result} - {run.summary}",
         f"agent: {run.agent}; fault: lost response (held {run.fault_delay_s:g} s, "
         f"agent timeout {run.client_timeout_s:g} s); exit code {run.exit_code}",
+        _identity(run),
         "",
         SCOPE,
         SANDBOX,
@@ -590,11 +635,11 @@ def format_text(run: RunReport) -> str:
 
 def format_markdown(run: RunReport) -> str:
     out = [
-        f"## crashtest run refunds: **{run.result}**",
+        f"## {_title(run)}: **{run.result}**",
         "",
         f"{run.summary[0].upper()}{run.summary[1:]}. Agent `{run.agent}`; fault: lost "
         f"response (held {run.fault_delay_s:g} s, agent timeout {run.client_timeout_s:g} s); "
-        f"exit code {run.exit_code}.",
+        f"exit code {run.exit_code}. {_identity(run)}.",
         "",
         f"{SCOPE} {SANDBOX}",
         "",
@@ -640,6 +685,10 @@ def format_junit(run: RunReport) -> str:
     )
     props = ET.SubElement(suite, "properties")
     for k, v in (
+        ("run_id", run.run_id),
+        ("scenario", run.scenario),
+        ("scenario_version", run.scenario_version),
+        ("driver", run.driver),
         ("agent", run.agent),
         ("result", run.result),
         ("exit_code", run.exit_code),

@@ -130,6 +130,9 @@ jobs:
       - name: Same verdicts over stdio and HTTP
         working-directory: ${{ runner.temp }}
         run: '"$BIN/python" "$GITHUB_WORKSPACE/tests/check_transport_parity.py" parity-pgdata'
+      - name: The test controller over stdio drives a run
+        working-directory: ${{ runner.temp }}
+        run: '"$BIN/python" "$GITHUB_WORKSPACE/tests/check_controller.py" controller-pgdata'
 
   inspector:
     # The MCP Inspector's CLI (docs/clients/mcp-inspector.md) against `crashtest serve`,

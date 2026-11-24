@@ -176,6 +176,10 @@ The tool's arguments, the idempotency key and the same steps with `curl` and Pyt
 
 **Security.** The agent under test sees only the simulated tool. Arming faults, resetting and judging stay with you: the sink's `/control/*` endpoints require a control token that `serve` stores in `.crashtest-stack.json` (never sent over MCP, never given to an agent that `crashtest run` starts), while the read-only ground truth (`GET /refunds`) stays open. An agent that can read that file can read the token, so keep the agent out of that folder. Everything listens on `127.0.0.1`, and the HTTP MCP server refuses requests whose `Host` or `Origin` header names any other host (DNS-rebinding protection).
 
+### Drive tests from your own MCP client: the test controller
+
+`crashtest controller --stdio` (or `--http`, token required) is a second MCP server, for you and never for the agent under test, with five tools: `create_test_run`, `configure_scenario`, `arm_fault`, `get_run_status` and `get_test_report`. It has no reset or delete tool. Reports carry a run ID and the scenario's name and version, and the verdict comes only from the sink, judged by the same checker and report code as `crashtest run`; a regression test checks that both give the same result, verdicts and counts for the same agent behaviour. See [docs/controller.md](docs/controller.md).
+
 ## Limitations
 
 - **Client guides.** Only the Python `mcp` client (stdio and HTTP) and the MCP Inspector's CLI are verified in CI; the Claude Desktop, Claude Code, VS Code, Cursor and Inspector web-UI steps follow those clients' documentation and have not been run yet ([docs/clients/](docs/clients/README.md)). `crashtest serve` picks a free port each time, so an HTTP client's configuration must be updated after a restart.
