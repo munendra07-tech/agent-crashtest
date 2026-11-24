@@ -1,3 +1,9 @@
+# WARNING: this file pins chromadb==1.5.9, which has open security advisories
+# (critical and high severity). It is used only to reproduce experiment 003 in
+# an isolated environment (see docs/experiments/003-mcp-client-libraries.md); it
+# is not part of the agent-crashtest package and is not installed by it. Do not
+# install it anywhere that handles real data. The pin is kept unchanged so the
+# experiment's recorded versions can be reproduced.
 aiofiles==24.1.0
 aiohappyeyeballs==2.7.1
 aiohttp==3.14.5

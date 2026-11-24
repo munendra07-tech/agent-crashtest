@@ -39,6 +39,7 @@ from pathlib import Path
 
 import httpx
 
+from crashtest import control_token
 from crashtest.checker import (
     VERDICTS,
     SubjectStatus,
@@ -143,7 +144,9 @@ async def run_trial(
     first_run: dict = {}
     resume: dict = {}
 
-    async with httpx.AsyncClient(base_url=sink_url, timeout=30.0) as sink:
+    async with httpx.AsyncClient(
+        base_url=sink_url, timeout=30.0, headers=control_token.control_headers(sink_url)
+    ) as sink:
         if kill_point == "none":
             first_run = await finish(await spawn(python, SCRIPT, *common), step_limit_s)
         elif kill_point == "late_response":

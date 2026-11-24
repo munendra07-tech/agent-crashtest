@@ -32,6 +32,7 @@ from xml.etree import ElementTree as ET
 
 import httpx
 
+from crashtest import control_token as ct
 from crashtest.cli import judge
 
 # The two example agents, by the names `--agent` accepts.
@@ -197,9 +198,11 @@ def run_trial(
     fault_delay_s: float,
     amount_cents: int,
     agent_timeout_s: float,
+    control_token: str | None = None,
 ) -> Trial:
     order_id = f"ord-{uuid.uuid4()}"
-    with httpx.Client(base_url=sink_url, timeout=10.0) as sink:
+    token = control_token or ct.token_for(sink_url)
+    with httpx.Client(base_url=sink_url, timeout=10.0, headers=ct.headers(token)) as sink:
         sink.put(
             "/control/faults", json={"order_id": order_id, "delay_s": fault_delay_s, "times": 1}
         ).raise_for_status()
@@ -226,6 +229,8 @@ def run_trial(
                 encoding="utf-8",
                 errors="replace",
                 timeout=agent_timeout_s,
+                # The agent under test never gets the sink's control token.
+                env=ct.agent_env(),
             )
             exit_code, stdout = proc.returncode, proc.stdout
             if proc.returncode != 0:
@@ -398,6 +403,7 @@ def run_refunds(
     agent_timeout_s: float = 60.0,
     fail_on_report_mismatch: bool = False,
     progress: bool = True,
+    control_token: str | None = None,
 ) -> RunReport:
     done: list[Trial] = []
     for n in range(1, trials + 1):
@@ -410,6 +416,7 @@ def run_refunds(
             fault_delay_s=fault_delay_s,
             amount_cents=amount_cents,
             agent_timeout_s=agent_timeout_s,
+            control_token=control_token,
         )
         done.append(trial)
         if progress:

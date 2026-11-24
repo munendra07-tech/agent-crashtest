@@ -1,6 +1,7 @@
 """MCP server exposing one side-effecting tool, `issue_refund`, backed by the sink.
 
-Run with:  python -m crashtest.refund_mcp.server
+Run with:  python -m crashtest.refund_mcp.server   (Streamable HTTP)
+           crashtest mcp --stdio                     (stdio; see crashtest.cli)
 Env:       SINK_URL (default http://127.0.0.1:8101), MCP_HOST, MCP_PORT,
            MCP_STATELESS and MCP_JSON_RESPONSE (both default true),
            MCP_EVENT_STORE (default false: an in-memory event store, for
@@ -8,7 +9,12 @@ Env:       SINK_URL (default http://127.0.0.1:8101), MCP_HOST, MCP_PORT,
            MCP_PROGRESS_DELAY_S (default unset: when set, the tool first sends
            one progress notification, then waits this long before it calls
            the sink; experiment 008's mid-stream cut needs bytes on the
-           stream before the commit)
+           stream before the commit),
+           MCP_DNS_REBINDING_PROTECTION (default true: the Host and Origin
+           headers must name 127.0.0.1, localhost or [::1], any port) and
+           MCP_ALLOWED_HOSTS (extra allowed Host values, comma-separated, such
+           as Docker container names "refund-mcp:*"; each also becomes an
+           allowed http:// Origin)
 
 The server adds no deduplication of its own. It forwards an optional
 idempotency key to the sink as a header, the way a payments client would.
@@ -102,6 +108,37 @@ def _env_flag(name: str, default: bool) -> bool:
     return value.strip().lower() in ("1", "true", "yes", "on")
 
 
+# Host and Origin values a local client sends. A web page the developer opens
+# cannot make a browser send these for a rebinding attacker's own domain.
+LOCAL_HOSTS = ("127.0.0.1:*", "localhost:*", "[::1]:*")
+
+
+def transport_security() -> TransportSecuritySettings:
+    """DNS-rebinding protection: on by default, local hosts only.
+
+    The MCP SDK checks every HTTP request's Host header (421 when it is not
+    allowed) and Origin header, if present (403). Docker Compose keeps the check
+    on and adds its container names through MCP_ALLOWED_HOSTS; turning it off
+    takes MCP_DNS_REBINDING_PROTECTION=false, an explicit setting.
+    """
+    if not _env_flag("MCP_DNS_REBINDING_PROTECTION", True):
+        return TransportSecuritySettings(enable_dns_rebinding_protection=False)
+    extra = [h.strip() for h in os.environ.get("MCP_ALLOWED_HOSTS", "").split(",") if h.strip()]
+    hosts = [*LOCAL_HOSTS, *extra]
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=hosts,
+        allowed_origins=[f"http://{h}" for h in hosts],
+    )
+
+
+def run_stdio(sink_url: str) -> None:
+    """Serve the same tool over stdio (stdout carries only the protocol)."""
+    global SINK_URL
+    SINK_URL = sink_url.rstrip("/")
+    mcp.run("stdio")
+
+
 def main() -> None:
     host = os.environ.get("MCP_HOST", "127.0.0.1")
     port = int(os.environ.get("MCP_PORT", "8102"))
@@ -119,9 +156,7 @@ def main() -> None:
         # with Last-Event-ID. `retry_interval` is left unset, so the client waits
         # its own default before reconnecting.
         event_store=InMemoryEventStore() if _env_flag("MCP_EVENT_STORE", False) else None,
-        # Host-header checking is off because this is a local test rig reached
-        # by container name inside Docker. Do not copy this to a real server.
-        transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
+        transport_security=transport_security(),
     )
 
 

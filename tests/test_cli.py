@@ -105,6 +105,9 @@ def test_serve_starts_the_stack_and_writes_its_urls(tmp_path, monkeypatch):
         state = json.loads(Path(cli.STATE_FILE).read_text(encoding="utf-8"))
         seen.update(state)
         seen["health"] = httpx.get(f"{state['sink_url']}/health", timeout=10).status_code
+        seen["anonymous_reset"] = httpx.post(
+            f"{state['sink_url']}/control/reset", timeout=10
+        ).status_code
         raise KeyboardInterrupt  # what Ctrl+C does
 
     monkeypatch.setattr(cli, "_idle", stop_after_checking)
@@ -112,4 +115,6 @@ def test_serve_starts_the_stack_and_writes_its_urls(tmp_path, monkeypatch):
 
     assert seen["health"] == 200
     assert seen["mcp_url"].endswith("/mcp")
+    assert len(seen["control_token"]) >= 32  # stored for the CLI, required by the sink
+    assert seen["anonymous_reset"] == 401
     assert not (tmp_path / cli.STATE_FILE).exists()  # removed on the way out

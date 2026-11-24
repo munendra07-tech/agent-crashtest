@@ -2,6 +2,8 @@
 
 Run with:  python -m crashtest.sink
 Needs:     DATABASE_URL (PostgreSQL connection string)
+           SINK_CONTROL_TOKEN (the control token; without it every /control/*
+           call is refused, see crashtest.control_token)
 
 The sink is deliberately simple. Its job is to be the ground truth for
 "how many times did the effect actually happen", and to inject one fault:
@@ -18,10 +20,12 @@ from contextlib import asynccontextmanager
 from importlib import resources
 from typing import Annotated, Literal
 
-from fastapi import FastAPI, Header, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 from pydantic import BaseModel, Field
+
+from crashtest import control_token
 
 
 class RefundRequest(BaseModel):
@@ -183,7 +187,24 @@ async def list_refunds(order_id: Annotated[str, Query(min_length=1)]) -> dict:
     return {"order_id": order_id, "refunds": refunds, "requests": requests}
 
 
-@app.put("/control/faults")
+def require_control_token(
+    authorization: Annotated[str | None, Header()] = None,
+) -> None:
+    """Refuse a /control/* call without the control token (the agent never has it)."""
+    expected = os.environ.get(control_token.SINK_ENV)
+    if not expected:
+        raise HTTPException(
+            503, "control is disabled: the sink was started without SINK_CONTROL_TOKEN"
+        )
+    if not control_token.matches(authorization, expected):
+        raise HTTPException(
+            401,
+            "the control token is missing or wrong",
+            headers={"WWW-Authenticate": control_token.SCHEME},
+        )
+
+
+@app.put("/control/faults", dependencies=[Depends(require_control_token)])
 async def arm_fault(body: FaultRequest) -> dict:
     async with app.state.pool.connection() as conn:
         await conn.execute(
@@ -195,7 +216,7 @@ async def arm_fault(body: FaultRequest) -> dict:
     return {"armed": body.model_dump()}
 
 
-@app.post("/control/reset")
+@app.post("/control/reset", dependencies=[Depends(require_control_token)])
 async def reset() -> dict:
     """Test helper: wipe all state."""
     async with app.state.pool.connection() as conn:

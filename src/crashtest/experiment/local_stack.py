@@ -19,6 +19,8 @@ from pathlib import Path
 
 import httpx
 
+from crashtest import control_token
+
 # Transport name -> (stateless, json_response) for the MCP server.
 TRANSPORTS: dict[str, tuple[bool, bool]] = {
     "stateless_json": (True, True),
@@ -61,6 +63,8 @@ class Stack:
     mcp_url: str  # the default transport
     database_url: str
     mcp_urls: dict[str, str] = field(default_factory=dict)  # one MCP server per transport
+    # What the sink requires on /control/*. Never given to the agent under test.
+    control_token: str = ""
 
     def __post_init__(self) -> None:
         self.mcp_urls.setdefault(DEFAULT_TRANSPORT, self.mcp_url)
@@ -130,8 +134,10 @@ def local_stack(
 
     sink_port = _free_port()
     sink_url = f"http://127.0.0.1:{sink_port}"
+    token = control_token.new_token()
+    # The MCP servers get no token: they only call POST /refunds.
     env = {
-        **os.environ,
+        **control_token.agent_env(),
         "DATABASE_URL": database_url,
         "SINK_URL": sink_url,
         "SINK_HOST": "127.0.0.1",
@@ -140,8 +146,16 @@ def local_stack(
     }
 
     procs: list[subprocess.Popen] = []
+    # Registered for this process only (crashtest.control_token.control_headers);
+    # not put in os.environ, so agent subprocesses do not inherit it.
+    control_token.register(sink_url, token)
     try:
-        procs.append(subprocess.Popen([sys.executable, "-m", "crashtest.sink"], env=env))
+        procs.append(
+            subprocess.Popen(
+                [sys.executable, "-m", "crashtest.sink"],
+                env={**env, control_token.SINK_ENV: token},
+            )
+        )
         _wait_for_http(f"{sink_url}/health")
         mcp_ports: dict[str, int] = {}
         for name in names:
@@ -170,8 +184,10 @@ def local_stack(
             mcp_url=mcp_urls[DEFAULT_TRANSPORT],
             database_url=database_url,
             mcp_urls=mcp_urls,
+            control_token=token,
         )
     finally:
+        control_token.unregister(sink_url)
         for p in reversed(procs):
             p.terminate()
         for p in procs:

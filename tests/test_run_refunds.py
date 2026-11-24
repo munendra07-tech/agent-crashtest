@@ -285,7 +285,7 @@ def test_selftest_end_to_end(tmp_path, monkeypatch, capsys):
 
 def test_selftest_reports_a_misbehaving_control(monkeypatch, capsys):
     """If the harness stops detecting the duplicate, selftest blames the harness: exit 1."""
-    fake_stack = type("S", (), {"mcp_url": "m", "sink_url": "s"})()
+    fake_stack = type("S", (), {"mcp_url": "m", "sink_url": "s", "control_token": "t"})()
     monkeypatch.setattr(cli, "_start_stack", lambda data_dir, cleanup: fake_stack)
     monkeypatch.setattr(
         rr, "run_refunds", lambda **kw: _report(_trial())

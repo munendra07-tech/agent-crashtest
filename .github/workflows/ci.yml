@@ -48,6 +48,9 @@ jobs:
   test-docker:
     # Same tests against the Docker Compose stack.
     runs-on: ubuntu-latest
+    env:
+      # A throwaway token for this job's sink (Compose requires one); not a secret.
+      CRASHTEST_CONTROL_TOKEN: ci-docker-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -113,6 +116,58 @@ jobs:
         working-directory: ${{ runner.temp }}
         run: |
           "$BIN/crashtest" run refunds --agent stable_key --trials 3
+      - name: stdio without a sink fails clearly
+        working-directory: ${{ runner.temp }}
+        run: |
+          set +e
+          "$BIN/crashtest" mcp --stdio --sink-url http://127.0.0.1:9 > stdio.out 2> stdio.err
+          code=$?
+          set -e
+          cat stdio.err
+          test "$code" -eq 2
+          test ! -s stdio.out
+          grep -q "no sink is running" stdio.err
+      - name: Same verdicts over stdio and HTTP
+        working-directory: ${{ runner.temp }}
+        run: '"$BIN/python" "$GITHUB_WORKSPACE/tests/check_transport_parity.py" parity-pgdata'
+
+  inspector:
+    # The MCP Inspector's CLI (docs/clients/mcp-inspector.md) against `crashtest serve`,
+    # over Streamable HTTP and stdio, exactly as the guide shows.
+    runs-on: ubuntu-latest
+    env:
+      INSPECTOR: "@modelcontextprotocol/inspector@2.14.0"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: pip install ".[local]"
+      - name: Start the stack
+        working-directory: ${{ runner.temp }}
+        run: |
+          nohup crashtest serve --data-dir "$RUNNER_TEMP/insp-pgdata" > serve.log 2>&1 &
+          for _ in $(seq 120); do [ -f .crashtest-stack.json ] && break; sleep 1; done
+          cat serve.log
+          echo "MCP_URL=$(python -c "import json; print(json.load(open('.crashtest-stack.json'))['mcp_url'])")" >> "$GITHUB_ENV"
+          echo "STACK_FILE=$RUNNER_TEMP/.crashtest-stack.json" >> "$GITHUB_ENV"
+      - name: tools/list and tools/call over Streamable HTTP
+        working-directory: ${{ runner.temp }}
+        run: |
+          npx -y "$INSPECTOR" --cli "$MCP_URL" --method tools/list | tee http-list.out
+          grep -q issue_refund http-list.out
+          npx -y "$INSPECTOR" --cli "$MCP_URL" --method tools/call --tool-name issue_refund --tool-arg order_id=ord-insp-1 --tool-arg amount_cents=2500
+          crashtest verdict ord-insp-1
+      - name: tools/list and tools/call over stdio
+        working-directory: ${{ runner.temp }}
+        run: |
+          npx -y "$INSPECTOR" --cli crashtest mcp --stdio --stack-file "$STACK_FILE" -- --method tools/list | tee stdio-list.out
+          grep -q issue_refund stdio-list.out
+          npx -y "$INSPECTOR" --cli crashtest mcp --stdio --stack-file "$STACK_FILE" -- --method tools/call --tool-name issue_refund --tool-arg order_id=ord-insp-2 --tool-arg amount_cents=2500
+          crashtest verdict ord-insp-2
 
   action:
     # The GitHub Action in action.yml, run from this checkout.

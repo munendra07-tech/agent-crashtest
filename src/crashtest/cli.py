@@ -1,6 +1,8 @@
 """`crashtest`: crash-test your own MCP client against a fake refund tool.
 
     crashtest serve                     start the sink and the MCP server locally
+    crashtest mcp --stdio               the same MCP server over stdio, for clients
+                                        that launch a command (needs a running sink)
     crashtest arm ORDER_ID [--delay 5]  make the next refund for ORDER_ID lose its response
     crashtest verdict ORDER_ID          count the refunds and judge them
     crashtest run refunds --agent naive|stable_key|PATH [--trials 5]
@@ -15,10 +17,12 @@ response past your client's timeout, so your client never hears back. What your
 client does next (retry, give up, report) decides how many refunds the sink holds.
 The verdict comes from the project's checker (`crashtest.checker`).
 
-`serve` writes the URLs it prints to `.crashtest-stack.json` in the current
-folder; `arm` and `verdict` read them from there, unless `--sink-url` or the
-`CRASHTEST_SINK_URL` environment variable says otherwise. Without either, they
-use `http://localhost:8101`, the Docker Compose stack's sink.
+`serve` writes the URLs it prints, and the sink's control token, to
+`.crashtest-stack.json` in the current folder; `arm`, `verdict` and `mcp` read them
+from there, unless `--sink-url` or the `CRASHTEST_SINK_URL` environment variable
+says otherwise (and `CRASHTEST_CONTROL_TOKEN` for the token). Without either, they
+use `http://localhost:8101`, the Docker Compose stack's sink. The sink refuses
+`/control/*` calls without the token; keep the file away from the agent under test.
 """
 
 from __future__ import annotations
@@ -34,6 +38,7 @@ from typing import TYPE_CHECKING
 
 import httpx
 
+from crashtest import control_token
 from crashtest.checker import (
     Report,
     SubjectStatus,
@@ -58,14 +63,41 @@ STATUS_OF_REPORT: dict[str, SubjectStatus] = {
 }
 
 
-def _sink_url(explicit: str | None) -> str:
+def _read_state(path: Path = STATE_FILE) -> dict:
+    return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+
+
+def _sink_url(explicit: str | None, state_file: Path = STATE_FILE) -> str:
     if explicit:
         return explicit.rstrip("/")
     if env := os.environ.get("CRASHTEST_SINK_URL"):
         return env.rstrip("/")
-    if STATE_FILE.is_file():
-        return str(json.loads(STATE_FILE.read_text(encoding="utf-8"))["sink_url"]).rstrip("/")
+    if sink := _read_state(state_file).get("sink_url"):
+        return str(sink).rstrip("/")
     return DOCKER_SINK_URL
+
+
+def _control_token(sink_url: str | None = None) -> str | None:
+    """CRASHTEST_CONTROL_TOKEN (or a stack this process started), else the state file's."""
+    if token := control_token.token_for(sink_url):
+        return token
+    return _read_state().get("control_token") or None
+
+
+def _write_state(stack: Stack) -> None:
+    """The stack's URLs and control token, readable by this user only where possible."""
+    STATE_FILE.unlink(missing_ok=True)
+    fd = os.open(STATE_FILE, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "sink_url": stack.sink_url,
+                "mcp_url": stack.mcp_url,
+                "control_token": stack.control_token,
+            },
+            f,
+            indent=2,
+        )
 
 
 def _idle() -> None:
@@ -79,13 +111,14 @@ def cmd_serve(args: argparse.Namespace) -> int:
     data_dir = Path(args.data_dir).resolve()
     print(f"Starting PostgreSQL ({data_dir}), the sink and the MCP server...", flush=True)
     with local_stack(data_dir) as stack:
-        STATE_FILE.write_text(
-            json.dumps({"sink_url": stack.sink_url, "mcp_url": stack.mcp_url}, indent=2),
-            encoding="utf-8",
-        )
+        _write_state(stack)
         print(
             f"\nMCP server (streamable HTTP): {stack.mcp_url}\n"
-            f"Sink:                         {stack.sink_url}\n\n"
+            f"MCP server (stdio):           crashtest mcp --stdio --stack-file "
+            f"{STATE_FILE.resolve()}\n"
+            f"Sink:                         {stack.sink_url}\n"
+            f"Control token:                in {STATE_FILE} (the sink requires it on "
+            "/control/*; do not give it to the agent)\n\n"
             "Point your MCP client at the MCP server; its tool is issue_refund.\n"
             "In another terminal, in this folder:\n"
             "  crashtest arm ORDER_ID      the next refund for ORDER_ID loses its response\n"
@@ -108,8 +141,17 @@ def cmd_arm(args: argparse.Namespace) -> int:
     r = httpx.put(
         f"{sink}/control/faults",
         json={"order_id": args.order_id, "delay_s": args.delay, "times": args.times},
+        headers=control_token.headers(_control_token(sink)),
         timeout=10.0,
     )
+    if r.status_code in (401, 503):
+        print(
+            f"crashtest: the sink refused to arm the fault ({r.status_code}). Run this in "
+            f"the folder where `crashtest serve` wrote {STATE_FILE}, or set "
+            f"{control_token.ENV} to the token the sink was started with.",
+            file=sys.stderr,
+        )
+        return 2
     r.raise_for_status()
     print(
         f"Armed: the next {args.times} refund(s) for {args.order_id} commit, then their "
@@ -161,6 +203,34 @@ def cmd_verdict(args: argparse.Namespace) -> int:
     return 0 if result["verdict"] == "correct" else 1
 
 
+def cmd_mcp(args: argparse.Namespace) -> int:
+    """`crashtest mcp --stdio`: the refund MCP server over stdio, on a running sink."""
+    state_file = Path(args.stack_file) if args.stack_file else STATE_FILE
+    if args.stack_file and not state_file.is_file():
+        print(
+            f"crashtest: no stack file at {state_file}; is `crashtest serve` running?",
+            file=sys.stderr,
+        )
+        return 2
+    sink = _sink_url(args.sink_url, state_file)
+    try:
+        httpx.get(f"{sink}/health", timeout=5.0).raise_for_status()
+    except httpx.HTTPError as exc:
+        # stderr only: stdout belongs to the MCP protocol.
+        print(
+            f"crashtest: no sink is running at {sink} ({exc}).\n"
+            "Start one first with `crashtest serve` (it writes .crashtest-stack.json; pass "
+            "that file with --stack-file) or `docker compose up`, or give its URL with "
+            "--sink-url or CRASHTEST_SINK_URL.",
+            file=sys.stderr,
+        )
+        return 2
+    from crashtest.refund_mcp.server import run_stdio
+
+    run_stdio(sink)
+    return 0
+
+
 def _start_stack(data_dir: str, cleanup: ExitStack) -> Stack:
     """Start the local stack for `run` and `selftest`; a failure is a SetupError (exit 2)."""
     from crashtest import refund_run as rr
@@ -200,6 +270,7 @@ def cmd_selftest(args: argparse.Namespace) -> int:
                     mcp_url=stack.mcp_url,
                     sink_url=stack.sink_url,
                     trials=args.trials,
+                    control_token=stack.control_token,
                 )
     except rr.SetupError as exc:
         print(f"crashtest: {exc}", file=sys.stderr)
@@ -239,6 +310,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 fault_delay_s=args.fault_delay,
                 amount_cents=args.amount_cents,
                 fail_on_report_mismatch=args.fail_on_report_mismatch,
+                control_token=stack.control_token,
             )
     except rr.SetupError as exc:
         print(f"crashtest: {exc}", file=sys.stderr)
@@ -278,6 +350,24 @@ def build_parser() -> argparse.ArgumentParser:
     arm.add_argument("--times", type=int, default=1, help="how many refunds it applies to")
     arm.add_argument("--sink-url")
     arm.set_defaults(func=cmd_arm)
+
+    mcp = sub.add_parser(
+        "mcp",
+        help="serve the refund MCP server over stdio (for clients that launch a command)",
+        description=(
+            "Serve the same refund MCP server as `crashtest serve` (one tool, issue_refund) "
+            "over stdio, on a sink that is already running: the one in --sink-url, "
+            "CRASHTEST_SINK_URL, or the stack file `crashtest serve` wrote. Exits with code "
+            "2 and a message on stderr when no sink answers."
+        ),
+    )
+    mcp.add_argument("--stdio", action="store_true", required=True, help="serve over stdio")
+    mcp.add_argument("--sink-url", help="the running sink's URL")
+    mcp.add_argument(
+        "--stack-file",
+        help=f"the {STATE_FILE} that `crashtest serve` wrote (default: in this folder)",
+    )
+    mcp.set_defaults(func=cmd_mcp)
 
     verdict = sub.add_parser("verdict", help="count an order's refunds and judge them")
     verdict.add_argument("order_id")

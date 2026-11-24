@@ -1,7 +1,15 @@
 # Local stack: PostgreSQL, the sink, and one refund MCP server per transport.
 # refund-mcp (8102) is stateless JSON, the default; 8103-8105 serve the other three;
 # 8106 is the stateful SSE server with an event store (experiment 007).
-# Ports are bound to 127.0.0.1 only; the control endpoints are unauthenticated.
+# Ports are bound to 127.0.0.1 only.
+# The sink's /control/* endpoints require a control token. Set it before starting:
+#   CRASHTEST_CONTROL_TOKEN=$(python -c "import secrets; print(secrets.token_urlsafe(32))")
+#   export CRASHTEST_CONTROL_TOKEN; docker compose up
+# and keep it in the environment of `crashtest arm` (it reads the same variable).
+# DNS-rebinding protection stays on in the MCP servers; MCP_ALLOWED_HOSTS adds the
+# container names that other containers use to reach them (an explicit setting).
+x-mcp-allowed-hosts: &mcp-allowed-hosts "refund-mcp:*,refund-mcp-stateless-sse:*,refund-mcp-stateful-json:*,refund-mcp-stateful-sse:*,refund-mcp-stateful-sse-store:*"
+
 services:
   postgres:
     image: postgres:16
@@ -22,6 +30,7 @@ services:
       DATABASE_URL: postgresql://crashtest:crashtest@postgres:5432/crashtest
       SINK_HOST: 0.0.0.0
       SINK_PORT: "8101"
+      SINK_CONTROL_TOKEN: ${CRASHTEST_CONTROL_TOKEN:?set CRASHTEST_CONTROL_TOKEN (see the top of docker-compose.yml)}
     ports:
       - "127.0.0.1:8101:8101"
     depends_on:
@@ -39,6 +48,7 @@ services:
     environment:
       SINK_URL: http://sink:8101
       MCP_HOST: 0.0.0.0
+      MCP_ALLOWED_HOSTS: *mcp-allowed-hosts
       MCP_PORT: "8102"
     ports:
       - "127.0.0.1:8102:8102"
@@ -51,6 +61,7 @@ services:
     environment:
       SINK_URL: http://sink:8101
       MCP_HOST: 0.0.0.0
+      MCP_ALLOWED_HOSTS: *mcp-allowed-hosts
       MCP_PORT: "8103"
       MCP_STATELESS: "true"
       MCP_JSON_RESPONSE: "false"
@@ -62,6 +73,7 @@ services:
     environment:
       SINK_URL: http://sink:8101
       MCP_HOST: 0.0.0.0
+      MCP_ALLOWED_HOSTS: *mcp-allowed-hosts
       MCP_PORT: "8104"
       MCP_STATELESS: "false"
       MCP_JSON_RESPONSE: "true"
@@ -73,6 +85,7 @@ services:
     environment:
       SINK_URL: http://sink:8101
       MCP_HOST: 0.0.0.0
+      MCP_ALLOWED_HOSTS: *mcp-allowed-hosts
       MCP_PORT: "8105"
       MCP_STATELESS: "false"
       MCP_JSON_RESPONSE: "false"
@@ -84,6 +97,7 @@ services:
     environment:
       SINK_URL: http://sink:8101
       MCP_HOST: 0.0.0.0
+      MCP_ALLOWED_HOSTS: *mcp-allowed-hosts
       MCP_PORT: "8106"
       MCP_STATELESS: "false"
       MCP_JSON_RESPONSE: "false"
@@ -100,6 +114,8 @@ services:
     environment:
       CRASHTEST_GIT_COMMIT: ${CRASHTEST_GIT_COMMIT:-}
       CRASHTEST_GIT_DIRTY: ${CRASHTEST_GIT_DIRTY:-}
+      # The harness arms faults; the subjects it starts inherit this environment.
+      CRASHTEST_CONTROL_TOKEN: ${CRASHTEST_CONTROL_TOKEN:-}
     volumes:
       - ./results/dbos_crash_linux:/out
     depends_on:
@@ -133,6 +149,8 @@ services:
     environment:
       CRASHTEST_GIT_COMMIT: ${CRASHTEST_GIT_COMMIT:-}
       CRASHTEST_GIT_DIRTY: ${CRASHTEST_GIT_DIRTY:-}
+      # The harness arms faults; the subjects it starts inherit this environment.
+      CRASHTEST_CONTROL_TOKEN: ${CRASHTEST_CONTROL_TOKEN:-}
     volumes:
       - ./results/single_call_linux:/out
     depends_on:
@@ -163,6 +181,8 @@ services:
     environment:
       CRASHTEST_GIT_COMMIT: ${CRASHTEST_GIT_COMMIT:-}
       CRASHTEST_GIT_DIRTY: ${CRASHTEST_GIT_DIRTY:-}
+      # The harness arms faults; the subjects it starts inherit this environment.
+      CRASHTEST_CONTROL_TOKEN: ${CRASHTEST_CONTROL_TOKEN:-}
     volumes:
       - ./results/langgraph_crash_linux:/out
     depends_on:

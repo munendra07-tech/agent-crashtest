@@ -170,8 +170,15 @@ To drive a client by hand instead of through an agent script:
 
 The tool's arguments, the idempotency key and the same steps with `curl` and Python: [docs/connect-your-client.md](docs/connect-your-client.md).
 
+### Connect an MCP client: stdio or HTTP
+
+`crashtest serve` serves the tool over Streamable HTTP at the URL it prints. For clients that launch a command instead, `crashtest mcp --stdio --stack-file <path to .crashtest-stack.json>` serves the same tool over stdio on the running sink (or `--sink-url URL`); without a running sink it says so on stderr and exits 2. Both transports run the same server code against the same sink, and CI checks that the same agent gets the same verdict over both. Copy-ready setup for the Python `mcp` client, the MCP Inspector, Claude Desktop, Claude Code, VS Code and Cursor, each marked with whether it has been verified: [docs/clients/](docs/clients/README.md).
+
+**Security.** The agent under test sees only the simulated tool. Arming faults, resetting and judging stay with you: the sink's `/control/*` endpoints require a control token that `serve` stores in `.crashtest-stack.json` (never sent over MCP, never given to an agent that `crashtest run` starts), while the read-only ground truth (`GET /refunds`) stays open. An agent that can read that file can read the token, so keep the agent out of that folder. Everything listens on `127.0.0.1`, and the HTTP MCP server refuses requests whose `Host` or `Origin` header names any other host (DNS-rebinding protection).
+
 ## Limitations
 
+- **Client guides.** Only the Python `mcp` client (stdio and HTTP) and the MCP Inspector's CLI are verified in CI; the Claude Desktop, Claude Code, VS Code, Cursor and Inspector web-UI steps follow those clients' documentation and have not been run yet ([docs/clients/](docs/clients/README.md)). `crashtest serve` picks a free port each time, so an HTTP client's configuration must be updated after a restart.
 - **One scenario.** A refund through one MCP tool, with one fault: the first response is lost after the refund commits. Connection cuts, crashes of the agent's own process and other effects (bookings, inventory) are not in `crashtest run` yet.
 - **The agent runs as a script**, once per order, with the arguments above. An agent that needs a model, credentials or a long-running process has to be wrapped in such a script.
 - **A test double, not a payment provider.** A PASS says your agent's retries are safe against this test double, a sink that enforces idempotency keys in its database; it says nothing about whether your real provider does.
@@ -350,6 +357,12 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 ### With Docker
 
 Verified on 16 November 2026 (Docker Desktop 4.29, PostgreSQL 16.16): the stack builds and the 19 tests of that day pass against it. The suite has grown since; CI runs it against the Docker stack on every push.
+
+The sink requires a control token on `/control/*`, and Compose refuses to start without one. Set it first, in the same shell you will run the tests or `crashtest arm` from:
+
+```powershell
+$env:CRASHTEST_CONTROL_TOKEN = python -c "import secrets; print(secrets.token_urlsafe(32))"
+```
 
 ```powershell
 docker compose up --build -d

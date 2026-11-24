@@ -27,6 +27,7 @@ from pathlib import Path
 
 import httpx
 
+from crashtest import control_token
 from crashtest.checker import (
     REPORT_OF_STATUS,
     VERDICTS,
@@ -112,7 +113,9 @@ async def run_single_call(
     drops_before = len(drop_proxy.drops)
     sink_retries_before = drop_proxy.sink_retries
 
-    async with httpx.AsyncClient(base_url=sink_url, timeout=30.0) as sink:
+    async with httpx.AsyncClient(
+        base_url=sink_url, timeout=30.0, headers=control_token.control_headers(sink_url)
+    ) as sink:
         if fault == "lost_response":
             r = await sink.put(
                 "/control/faults",

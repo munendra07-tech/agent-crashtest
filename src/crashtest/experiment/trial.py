@@ -21,6 +21,7 @@ import httpcore
 import httpx
 from mcp import Client, MCPError
 
+from crashtest import control_token
 from crashtest.checker import (
     REPORT_OF_STATUS,
     Report,
@@ -230,7 +231,9 @@ async def run_trial(
         else:
             drop_proxy.watch(order_id)
 
-    async with httpx.AsyncClient(base_url=sink_url, timeout=30.0) as sink:
+    async with httpx.AsyncClient(
+        base_url=sink_url, timeout=30.0, headers=control_token.control_headers(sink_url)
+    ) as sink:
         if fault == "lost_response":
             # The sink will commit the first refund for this order, then sit on
             # the response for longer than the client is willing to wait.

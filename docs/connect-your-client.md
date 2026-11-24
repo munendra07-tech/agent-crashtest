@@ -31,20 +31,23 @@ Install the project with its local extra (`pip install "agent-crashtest[local] @
 
 | Step | Command | What it does |
 |---|---|---|
-| 1 | `crashtest serve` | Starts PostgreSQL, the sink and the MCP server on free ports, prints their URLs, and runs until Ctrl+C. It writes the URLs to `.crashtest-stack.json` in the current folder, so the commands below find the sink |
+| 1 | `crashtest serve` | Starts PostgreSQL, the sink and the MCP server on free ports, prints their URLs, and runs until Ctrl+C. It writes the URLs and the sink's control token to `.crashtest-stack.json` in the current folder, so the commands below find the sink and may arm faults. For a client that launches a command, `crashtest mcp --stdio --stack-file <that file>` serves the same tool over stdio; per-client setup is in [clients/](clients/README.md) |
 | 2 | `crashtest arm ORDER_ID --delay 5` | The next refund for `ORDER_ID` commits, then its response is held for 5 seconds |
 | 3 | (your client) | Calls `issue_refund` on the printed MCP URL, with a timeout shorter than the delay |
 | 4 | `crashtest verdict ORDER_ID --report done` | Reads the sink and prints the refunds committed, the checker's verdict, and whether what your client said (`--report`) agrees with the sink. Exits 0 only for `correct`; `--json` prints one JSON object. The sink is the ground truth; `--report` is the agent's own claim, taken as given (the harness cannot see inside your client), so `unconfirmed_success` cannot occur here |
 
-`arm` and `verdict` take `--sink-url` (or the `CRASHTEST_SINK_URL` environment variable) to use another sink, such as the Docker Compose stack's `http://localhost:8101`. The sections below do the same steps by hand, with `curl` and Python.
+`arm` and `verdict` take `--sink-url` (or the `CRASHTEST_SINK_URL` environment variable) to use another sink, such as the Docker Compose stack's `http://localhost:8101`. The sink refuses `/control/*` calls (arming, reset) without its control token; `arm` reads it from `.crashtest-stack.json` or from `CRASHTEST_CONTROL_TOKEN`. Reading the ground truth (`GET /refunds`, what `verdict` does) needs no token. The sections below do the same steps by hand, with `curl` and Python.
 
 ## 1. Start the stack
 
 **With Docker:**
 
 ```sh
+export CRASHTEST_CONTROL_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
 docker compose up --build -d --wait
 ```
+
+Compose refuses to start without `CRASHTEST_CONTROL_TOKEN`: the sink requires it on `/control/*`. Keep it set in the shell where you run `crashtest arm` or `curl`.
 
 The sink listens on `http://localhost:8101`. The MCP server, stateless JSON over streamable HTTP, is at `http://localhost:8102/mcp`. Three more MCP servers with other session and response settings are on ports 8103 to 8105; see `docker-compose.yml`.
 
@@ -58,7 +61,7 @@ with local_stack() as stack:
     input("Stack running; press Enter to stop.")
 ```
 
-It starts PostgreSQL, the sink and the MCP server on free ports, and prints them. The steps below use the Docker ports; use the printed URLs instead if you start it this way.
+It starts PostgreSQL, the sink and the MCP server on free ports, and prints them; `stack.control_token` is the sink's control token. The steps below use the Docker ports; use the printed URLs instead if you start it this way.
 
 ## 2. The tool
 
@@ -79,6 +82,7 @@ The server adds no deduplication of its own. It passes the key to the sink, whic
 
    ```sh
    curl -X PUT http://localhost:8101/control/faults \
+     -H "Authorization: Bearer $CRASHTEST_CONTROL_TOKEN" \
      -H "Content-Type: application/json" \
      -d '{"order_id": "ord-3f2a", "delay_s": 5, "times": 1}'
    ```
@@ -114,7 +118,7 @@ print(report_matches_sink(effects=effects, intended=1, report="done"))  # False
 ## Reset between runs
 
 ```sh
-curl -X POST http://localhost:8101/control/reset
+curl -X POST http://localhost:8101/control/reset -H "Authorization: Bearer $CRASHTEST_CONTROL_TOKEN"
 ```
 
 This empties the sink's refunds, request log and armed faults, and restarts their IDs. Use it only on a test stack.
