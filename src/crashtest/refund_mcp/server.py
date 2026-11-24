@@ -1,4 +1,4 @@
-"""MCP server exposing one side-effecting tool, `issue_refund`, backed by the sink.
+"""MCP server exposing refund creation and read-only status tools backed by the sink.
 
 Run with:  python -m crashtest.refund_mcp.server   (Streamable HTTP)
            crashtest mcp --stdio                     (stdio; see crashtest.cli)
@@ -70,6 +70,12 @@ class RefundResult(BaseModel):
     replayed: bool
 
 
+class RefundStatus(BaseModel):
+    """Whether the sink has recorded a refund for an order."""
+
+    exists: bool
+
+
 @mcp.tool()
 async def issue_refund(
     order_id: str,
@@ -99,6 +105,19 @@ async def issue_refund(
         )
     response.raise_for_status()
     return RefundResult.model_validate(response.json())
+
+
+@mcp.tool()
+async def check_refund_status(order_id: str) -> RefundStatus:
+    """Check whether a refund exists without changing sink state.
+
+    @param order_id: The order whose refund status should be checked.
+    @returns: Whether the sink has recorded a refund for the order.
+    """
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.get(f"{SINK_URL}/refunds", params={"order_id": order_id})
+    response.raise_for_status()
+    return RefundStatus(exists=bool(response.json()["refunds"]))
 
 
 def _env_flag(name: str, default: bool) -> bool:

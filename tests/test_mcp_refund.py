@@ -22,6 +22,25 @@ async def test_tool_is_listed_with_an_optional_idempotency_key(stack):
     assert "idempotency_key" in tool.input_schema["properties"]
 
 
+async def test_status_tool_reports_sink_state_without_creating_a_request(stack, sink, order_id):
+    """The read-only status tool mirrors sink state without creating a request.
+
+    @param stack: The local MCP and sink test stack.
+    @param sink: The HTTP client connected to the test sink.
+    @param order_id: A unique order ID for this test.
+    @returns: None.
+    """
+    async with Client(stack.mcp_url) as client:
+        absent = await client.call_tool("check_refund_status", {"order_id": order_id})
+        await sink.post("/refunds", json={"order_id": order_id, "amount_cents": 2500})
+        present = await client.call_tool("check_refund_status", {"order_id": order_id})
+
+    truth = (await sink.get("/refunds", params={"order_id": order_id})).json()
+    assert not absent.is_error and absent.structured_content == {"exists": False}
+    assert not present.is_error and present.structured_content == {"exists": True}
+    assert len(truth["refunds"]) == len(truth["requests"]) == 1
+
+
 @pytest.mark.parametrize("arm", ARMS)
 async def test_without_a_fault_every_arm_refunds_exactly_once(stack, arm):
     result = await run_trial(
