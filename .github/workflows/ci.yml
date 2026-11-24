@@ -175,6 +175,31 @@ jobs:
           npx -y "$INSPECTOR" --cli crashtest mcp --stdio --stack-file "$STACK_FILE" -- --method tools/call --tool-name issue_refund --tool-arg order_id=ord-insp-2 --tool-arg amount_cents=2500
           crashtest verdict ord-insp-2
 
+  framework-examples:
+    # examples/frameworks/: agents built with Pydantic AI and LangGraph, driven by a
+    # scripted model (no API key). Each framework gets its own Python; the naive
+    # variant must FAIL (a duplicate) and the stable-key one must PASS.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e ".[dev]"
+      - name: The frameworks' own environments
+        run: |
+          python -m venv "$RUNNER_TEMP/ex-pydantic-ai"
+          "$RUNNER_TEMP/ex-pydantic-ai/bin/python" -m pip install -r examples/frameworks/requirements-pydantic-ai.txt
+          python -m venv "$RUNNER_TEMP/ex-langgraph"
+          "$RUNNER_TEMP/ex-langgraph/bin/python" -m pip install -r examples/frameworks/requirements-langgraph.txt
+      - name: Naive FAIL and stable key PASS, per framework
+        env:
+          CRASHTEST_EXAMPLE_PYDANTIC_AI_PYTHON: ${{ runner.temp }}/ex-pydantic-ai/bin/python
+          CRASHTEST_EXAMPLE_LANGGRAPH_PYTHON: ${{ runner.temp }}/ex-langgraph/bin/python
+          CRASHTEST_REQUIRE_EXAMPLES: "1"
+        run: pytest tests/test_framework_examples.py -v -rs
+
   action:
     # The GitHub Action in action.yml, run from this checkout.
     runs-on: ubuntu-latest

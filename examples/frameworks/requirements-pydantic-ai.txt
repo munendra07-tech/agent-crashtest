@@ -1,0 +1,2 @@
+# The Pydantic AI example's own environment (not a dependency of agent-crashtest).
+pydantic-ai-slim[mcp]==2.68.0

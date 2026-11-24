@@ -102,6 +102,8 @@ crashtest run refunds --agent path/to/my_agent.py --trials 10
 
 [`examples/check_status_agent.py`](examples/check_status_agent.py) shows the other safe pattern: after a timeout it looks the refund up with the read-only tool `check_refund_status(order_id)` before retrying.
 
+Agents built with a framework: [`examples/frameworks/`](examples/frameworks/README.md) has a Pydantic AI agent and a LangGraph agent, each driven by a scripted model (no API key), each checked in CI (naive FAIL, stable key PASS).
+
 ### Reports and exit codes
 
 `--format text|json|markdown|junit` picks the report's format (`markdown` suits a PR comment, `junit` a CI test report); `--output FILE` writes it to a file, and `--junit-file FILE` and `--markdown-file FILE` write a second copy. Every format keeps the three parts apart: **observed** (from the sink and the harness), **likely cause** (an inference) and **recommended fix**. Each trial's verdict comes from the project's checker, as defined in the [contract](docs/contract.md); PASS means every trial's verdict is `correct`.
