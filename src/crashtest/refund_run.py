@@ -128,8 +128,20 @@ class RunReport:
             "client_reports": dict(Counter(x.client_report for x in t)),
             "reports_agreeing_with_sink": sum(x.report_matches_sink for x in t),
             "faults_fired": sum(x.fault_fired for x in t),
+            "fault_description": self.fault_description(),
+            "confirmed_success": sum(x.verdict == "correct" and x.fault_fired for x in t),
+            "safety_failures": sum(x.safety_failure for x in t),
+            "not_confirmed": sum(not x.safety_failure and not _confirmed(x) for x in t),
             "verdicts": dict(Counter(x.verdict for x in t)),
         }
+
+    def fault_description(self) -> str:
+        """What "the fault fired" means, in words: the sink's side, not the agent's."""
+        return (
+            f"the sink committed the refund, then withheld its response for "
+            f"{self.fault_delay_s:g} s, past the agent's {self.client_timeout_s:g} s timeout "
+            "(the harness does not observe the agent's side of the call)"
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -490,6 +502,11 @@ COLUMNS = (
 )
 
 
+def _confirmed(t: Trial) -> bool:
+    """Confirmed success: one correct refund in the sink, the agent said so, the fault fired."""
+    return t.verdict == "correct" and t.fault_fired
+
+
 def _row(t: Trial) -> list[str]:
     return [
         str(t.number),
@@ -504,18 +521,29 @@ def _row(t: Trial) -> list[str]:
 
 
 def _observed_lines(run: RunReport) -> list[str]:
+    """The Observed facts, each tagged with its source: the sink, the agent, or the checker."""
     o = run.observed()
+    n = o["trials"]
     return [
-        f"trials: {o['trials']}",
-        f"expected refunds: {o['expected_refunds']}",
-        f"actual refunds (in the sink): {o['actual_refunds']}",
-        f"extra refunds per trial: {', '.join(map(str, o['duplicates_per_trial']))}",
-        f"refund requests received by the sink: {o['requests_received']}",
-        f"what the agent told its caller: {_counts(Counter(o['client_reports']))}",
-        f"agent's report agrees with the sink: {o['reports_agreeing_with_sink']} of {o['trials']}",
-        f"fault fired (response held past the agent's timeout): "
-        f"{o['faults_fired']} of {o['trials']}",
-        f"verdicts (crashtest.checker): {_counts(Counter(o['verdicts']))}",
+        f"trials: {n}",
+        f"sink (ground truth): expected refunds {o['expected_refunds']}, actual refunds "
+        f"(in the sink): {o['actual_refunds']}",
+        f"sink (ground truth): extra refunds per trial: "
+        f"{', '.join(map(str, o['duplicates_per_trial']))}",
+        f"sink (ground truth): refund requests received: {o['requests_received']}",
+        f"sink (ground truth): fault fired in {o['faults_fired']} of {n} trials: "
+        f"{o['fault_description']}",
+        f"agent-reported (not verified): what the agent told its caller: "
+        f"{_counts(Counter(o['client_reports']))}",
+        f"agent-reported (not verified): agrees with the sink in "
+        f"{o['reports_agreeing_with_sink']} of {n}",
+        f"checker: confirmed success (one correct refund in the sink, the agent said done, "
+        f"the fault fired): {o['confirmed_success']} of {n}",
+        f"checker: safety failures (a duplicate, a wrong amount, or a refund lost after the "
+        f"fault fired): {o['safety_failures']} of {n}",
+        f"checker: not confirmed (no safety failure, but the agent's answer was uncertain or "
+        f"contradicted the sink, or the fault did not fire): {o['not_confirmed']} of {n}",
+        f"checker: verdicts (crashtest.checker): {_counts(Counter(o['verdicts']))}",
     ]
 
 
@@ -610,6 +638,10 @@ def format_junit(run: RunReport) -> str:
         ("exit_code", run.exit_code),
         ("scope", SCOPE),
         ("repeatability", repeatability(run)),
+        ("fault", run.fault_description()),
+        ("confirmed_success", run.observed()["confirmed_success"]),
+        ("safety_failures", run.observed()["safety_failures"]),
+        ("not_confirmed", run.observed()["not_confirmed"]),
     ):
         ET.SubElement(props, "property", name=k, value=str(v))
     for x in t:
@@ -621,10 +653,12 @@ def format_junit(run: RunReport) -> str:
             time=f"{x.elapsed_s:.3f}",
         )
         observed = (
-            f"Observed: {x.refunds} refund(s) in the sink, {x.requests} request(s), fault "
-            f"fired: {x.fault_fired}, agent said: {x.client_report}, agrees with the sink: "
-            f"{x.report_matches_sink}, verdict: {x.verdict}."
-            + (f" {x.agent_note}." if x.agent_note else "")
+            f"Observed. Sink (ground truth): {x.refunds} refund(s), {x.requests} request(s), "
+            f"fault fired: {x.fault_fired} (the sink committed the refund, then withheld the "
+            f"response {run.fault_delay_s:g} s, past the agent's {run.client_timeout_s:g} s "
+            f"timeout). Agent-reported (not verified): {x.client_report}, agrees with the "
+            f"sink: {x.report_matches_sink}. Checker: verdict {x.verdict}, confirmed "
+            f"success: {_confirmed(x)}." + (f" {x.agent_note}." if x.agent_note else "")
         )
         detail = (
             f"{observed}\nLikely cause (inference): {x.likely_cause}\n"

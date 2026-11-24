@@ -2,6 +2,8 @@
 
 This guide is for testing a client, framework or agent of your own against the same fault the experiments use. The fault: the sink commits a refund, then holds its response past your client's timeout, so the client never hears back. What decides the result is how many refunds the sink holds afterwards, not what your client says.
 
+**Your client or agent script runs on your machine, with your environment.** Do not give it secrets or production credentials it does not need (payment-provider keys, production database URLs, cloud tokens); in CI the script runs inside the GitHub Actions job with whatever the workflow gives it, and the Action passes none. Test with a throwaway configuration.
+
 **Nothing real is refunded.** The tool is a test double: `issue_refund` writes one row to the sink, a local PostgreSQL database that the stack starts for you. No payment provider, account or network service outside your machine is involved, and no real money moves. Everything runs locally; there is no hosted server.
 
 ## Two examples: an unsafe retry and a stable key
@@ -32,7 +34,7 @@ Install the project with its local extra (`pip install "agent-crashtest[local] @
 | 1 | `crashtest serve` | Starts PostgreSQL, the sink and the MCP server on free ports, prints their URLs, and runs until Ctrl+C. It writes the URLs to `.crashtest-stack.json` in the current folder, so the commands below find the sink |
 | 2 | `crashtest arm ORDER_ID --delay 5` | The next refund for `ORDER_ID` commits, then its response is held for 5 seconds |
 | 3 | (your client) | Calls `issue_refund` on the printed MCP URL, with a timeout shorter than the delay |
-| 4 | `crashtest verdict ORDER_ID --report done` | Reads the sink and prints the refunds committed, the checker's verdict, and whether what your client said (`--report`) agrees with the sink. Exits 0 only for `correct`; `--json` prints one JSON object |
+| 4 | `crashtest verdict ORDER_ID --report done` | Reads the sink and prints the refunds committed, the checker's verdict, and whether what your client said (`--report`) agrees with the sink. Exits 0 only for `correct`; `--json` prints one JSON object. The sink is the ground truth; `--report` is the agent's own claim, taken as given (the harness cannot see inside your client), so `unconfirmed_success` cannot occur here |
 
 `arm` and `verdict` take `--sink-url` (or the `CRASHTEST_SINK_URL` environment variable) to use another sink, such as the Docker Compose stack's `http://localhost:8101`. The sections below do the same steps by hand, with `curl` and Python.
 

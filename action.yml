@@ -2,7 +2,9 @@ name: agent-crashtest refunds
 description: >-
   Run an agent against one simulated refund tool over MCP (a test double writing to a
   local PostgreSQL; no real money) with one fault, a lost response, and fail the build
-  if the agent refunds twice.
+  if the agent refunds twice. A custom agent script runs inside the job, with the
+  environment the workflow gives it: do not give it secrets or production credentials
+  it does not need. The Action passes none.
 branding:
   icon: shield
   color: red

@@ -74,10 +74,17 @@ jobs:
         run: docker compose down -v
 
   clean-install:
-    # A clean Ubuntu runner: install the package (not editable) into a fresh
-    # environment and run both example agents outside the checkout. The unsafe
-    # agent must FAIL (exit 1), the safe one must PASS (exit 0).
-    runs-on: ubuntu-latest
+    # A clean runner on each OS: install the package (not editable) into a fresh
+    # environment and run selftest and both example agents outside the checkout. The
+    # unsafe agent must FAIL (exit 1), the safe one must PASS (exit 0).
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -86,24 +93,26 @@ jobs:
       - name: Install from scratch
         run: |
           python -m venv "$RUNNER_TEMP/clean"
-          "$RUNNER_TEMP/clean/bin/pip" install --no-cache-dir ".[local]"
+          if [ -d "$RUNNER_TEMP/clean/Scripts" ]; then BIN=Scripts; else BIN=bin; fi
+          echo "BIN=$RUNNER_TEMP/clean/$BIN" >> "$GITHUB_ENV"
+          "$RUNNER_TEMP/clean/$BIN/python" -m pip install --no-cache-dir ".[local]"
       - name: Selftest
         working-directory: ${{ runner.temp }}
-        run: '"$RUNNER_TEMP/clean/bin/crashtest" selftest'
+        run: '"$BIN/crashtest" selftest'
       - name: The naive agent fails
         working-directory: ${{ runner.temp }}
         run: |
           set +e
-          "$RUNNER_TEMP/clean/bin/crashtest" run refunds --agent naive --trials 3 \
+          "$BIN/crashtest" run refunds --agent naive --trials 3 \
             --format json --output naive.json
           code=$?
           set -e
           test "$code" -eq 1
-          "$RUNNER_TEMP/clean/bin/python" -c "import json; r = json.load(open('naive.json')); print(r['summary']); assert r['result'] == 'FAIL'"
+          "$BIN/python" -c "import json; r = json.load(open('naive.json')); print(r['summary']); assert r['result'] == 'FAIL'"
       - name: The stable-key agent passes
         working-directory: ${{ runner.temp }}
         run: |
-          "$RUNNER_TEMP/clean/bin/crashtest" run refunds --agent stable_key --trials 3
+          "$BIN/crashtest" run refunds --agent stable_key --trials 3
 
   action:
     # The GitHub Action in action.yml, run from this checkout.

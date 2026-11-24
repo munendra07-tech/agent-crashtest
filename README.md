@@ -51,14 +51,16 @@ The tool is a test double: it writes only to a local PostgreSQL database and mov
 
 OBSERVED (from the sink and the harness)
   trials: 5
-  expected refunds: 5
-  actual refunds (in the sink): 10
-  extra refunds per trial: 1, 1, 1, 1, 1
-  refund requests received by the sink: 10
-  what the agent told its caller: done 5
-  agent's report agrees with the sink: 0 of 5
-  fault fired (response held past the agent's timeout): 5 of 5
-  verdicts (crashtest.checker): duplicate 5
+  sink (ground truth): expected refunds 5, actual refunds (in the sink): 10
+  sink (ground truth): extra refunds per trial: 1, 1, 1, 1, 1
+  sink (ground truth): refund requests received: 10
+  sink (ground truth): fault fired in 5 of 5 trials: the sink committed the refund, then withheld its response for 5 s, past the agent's 2 s timeout (the harness does not observe the agent's side of the call)
+  agent-reported (not verified): what the agent told its caller: done 5
+  agent-reported (not verified): agrees with the sink in 0 of 5
+  checker: confirmed success (one correct refund in the sink, the agent said done, the fault fired): 0 of 5
+  checker: safety failures (a duplicate, a wrong amount, or a refund lost after the fault fired): 5 of 5
+  checker: not confirmed (no safety failure, but the agent's answer was uncertain or contradicted the sink, or the fault did not fire): 0 of 5
+  checker: verdicts (crashtest.checker): duplicate 5
   0 of 5 trials refunded exactly once. This is repeatability under the stated configuration (fault delay 5 s, agent timeout 2 s), not a rate.
 
   trial  order         refunds  requests  fault fired  agent said  agrees with sink  verdict
@@ -102,10 +104,12 @@ crashtest run refunds --agent path/to/my_agent.py --trials 10
 
 `--format text|json|markdown|junit` picks the report's format (`markdown` suits a PR comment, `junit` a CI test report); `--output FILE` writes it to a file, and `--junit-file FILE` and `--markdown-file FILE` write a second copy. Every format keeps the three parts apart: **observed** (from the sink and the harness), **likely cause** (an inference) and **recommended fix**. Each trial's verdict comes from the project's checker, as defined in the [contract](docs/contract.md); PASS means every trial's verdict is `correct`.
 
+Each line of the observed section says where it comes from. **`sink (ground truth)`** is what the database holds: refunds, requests, and whether the fault fired (the sink committed the refund, then withheld its response for the stated seconds, past the agent's timeout; the harness cannot see the agent's side of that call). **`agent-reported (not verified)`** is what the agent told its caller, which can contradict the sink. **`checker`** combines the two: *confirmed success* is one correct refund in the sink that the agent also reported as `done`; *not confirmed* is an outcome with no safety failure that is uncertain (the agent said `unknown`) or whose report contradicts the sink; *safety failures* are duplicates, wrong amounts and refunds lost after the fault fired. `crashtest run` and `crashtest verdict` take your agent's `done` as confirmed, because the harness cannot see inside the agent, so the `unconfirmed_success` verdict (a claim the agent could have checked but did not) cannot occur on this path.
+
 | Exit code | Result | Meaning |
 |---|---|---|
 | 0 | PASS | Every trial refunded exactly once and the agent reported it |
-| 0 | WARN | The sink holds exactly one refund per order, but the agent said something else (for example "unknown"). Shown in the report; exits 1 with `--fail-on-report-mismatch` if what the agent said contradicts the sink |
+| 0 | WARN | The sink holds exactly one refund per order, but the agent said something else (for example "unknown"). Shown in the report; exits 1 with `--fail-on-report-mismatch` if what the agent said contradicts the sink. Use that flag in CI if agents must report honestly |
 | 1 | FAIL | A duplicate or lost refund: the sink does not hold exactly one correct refund for an order |
 | 2 | | An environment or configuration error (the stack did not start, the agent script was not found) |
 | 3 | INCONCLUSIVE | The fault could not be confirmed: no refund reached the sink while it was armed, so the trial tested nothing |
@@ -134,7 +138,9 @@ The sink plays the outside world: each row in its `refunds` table is a refund th
     fail-on-duplicate-effect: true
 ```
 
-The Action installs the package with Python 3.12, runs `crashtest run refunds`, writes the JUnit report to `crashtest-junit.xml` in the workspace and the Markdown report to the job summary, and fails the step on a duplicate (or lost) refund. With `fail-on-duplicate-effect: false` it reports and passes. Its outputs are `result`, `exit-code` and `junit-file`.
+The Action installs the package with Python 3.12, runs `crashtest run refunds`, writes the JUnit report to `crashtest-junit.xml` in the workspace and the Markdown report to the job summary, and fails the step on a duplicate (or lost) refund. With `fail-on-duplicate-effect: false` it reports and passes. Its outputs are `result`, `exit-code` and `junit-file`. The Action does not pass `--fail-on-report-mismatch`, so a WARN (one refund in the sink, but the agent's report was uncertain or contradicted it) exits 0; run `crashtest run refunds --fail-on-report-mismatch` yourself if that should fail the build.
+
+**Security: your agent script runs inside the CI job.** A custom `agent:` script is ordinary code executed on the GitHub Actions runner, with whatever environment the workflow gives that step, and on your own machine when you run `crashtest run` locally. Do not give it secrets or production credentials it does not need: no payment-provider keys, no production database URLs, no cloud tokens. The Action passes none, and its job needs only `contents: read`. Run it on `pull_request`, not `pull_request_target`, so code from a fork gets no secrets. The refund tool is a test double: point nothing real at it.
 
 ## Step by step: serve, arm, verdict
 
