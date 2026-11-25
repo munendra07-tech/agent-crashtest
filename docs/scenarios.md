@@ -33,7 +33,7 @@ What the agent sees: its call times out; the refund has already been made. A nai
 
 What the agent sees: its connection is dropped (with the reference `mcp` client, `RemoteProtocolError`). Nothing was refunded, because the call never reached the server, so a retry, even a naive one, refunds once.
 
-**Why it matters.** The agent sees the same error as when the connection is cut *after* the commit, where the same naive retry refunds twice (experiment 008; `tests/test_scenarios.py` checks both: the same outcome and exception type for the two cuts, and one refund against two). From the error alone the agent cannot tell which happened. A PASS here does not show that the agent handles cuts safely; together with a PASS on `refunds` (a stable key, or looking the refund up before retrying), it does.
+**Why it matters.** The agent sees the same error as when the connection is cut *after* the commit, where the same naive retry refunds twice (experiment 008; `tests/test_scenarios.py` checks both: the same outcome and exception type for the two cuts, and one refund against two). From the error alone the agent cannot tell which happened. A PASS here does not show that the agent handles cuts safely; together with a PASS on `refunds` (a stable key), it does. An agent that looks the refund up before retrying also passes both, but only because this sink commits before the lookup; in a real system the first request can commit after the lookup, so a lookup is an extra on top of an enforced key, not a replacement.
 
 **Results.**
 

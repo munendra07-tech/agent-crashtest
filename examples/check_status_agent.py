@@ -1,5 +1,10 @@
 """Check refund status after a timeout, before retrying the operation.
 
+This passes both scenarios, but a lookup is weaker than an enforced idempotency
+key: in a real system the first request can still commit after the lookup says
+"none" (or another worker can act in between), and the retry then refunds twice.
+Use a lookup on top of a key, not instead of one.
+
 The agent contract matches `stable_key_agent.py`:
   arguments  --mcp-url URL --order-id ID [--amount-cents N] [--timeout SECONDS]
   stdout     the last line is one JSON object with "report": "done", "unknown"

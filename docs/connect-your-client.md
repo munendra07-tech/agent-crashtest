@@ -75,7 +75,7 @@ The MCP server has two tools. `issue_refund` makes the refund:
 
 The server adds no deduplication of its own. It passes the key to the sink, which enforces it in the database.
 
-`check_refund_status(order_id)` is read-only: it returns `{"exists": true}` or `{"exists": false}`, from the sink's rows, and changes nothing (no refund, no request-log entry). An agent can use it to look a refund up after a timeout instead of retrying blindly; [`examples/check_status_agent.py`](../examples/check_status_agent.py) does that.
+`check_refund_status(order_id)` is read-only: it returns `{"exists": true}` or `{"exists": false}`, from the sink's rows, and changes nothing (no refund, no request-log entry). An agent can use it to look a refund up after a timeout instead of retrying blindly; [`examples/check_status_agent.py`](../examples/check_status_agent.py) does that. In this test a lookup always sees the refund, because the sink commits before it holds the response. In a real system the first request can still be in flight when the lookup runs and commit after the retry, or another worker can act between the check and the retry: two refunds. Rely on an enforced idempotency key, and use a lookup as an extra on top of it.
 
 ## 3. Run one trial
 
