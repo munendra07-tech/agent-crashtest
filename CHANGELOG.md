@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.3.0 (prepared, not released): connect over stdio, a control token, a test controller, a second scenario
+## 0.3.0 (25 November 2026): connect over stdio, a control token, a test controller, a second scenario
 
 Easier to connect, harder for the agent under test to tamper with, and a second fault taken from experiment 008. No verdict, checker or contract change: every trial is still judged from the sink's rows by `crashtest.checker`, and the reference scenario's reports are byte-identical to 0.2.1's apart from the additive run metadata below.
 

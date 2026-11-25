@@ -19,7 +19,7 @@ A lost response is ordinary: a timeout, a dropped connection, a restarted worker
 Python 3.12 or later; no Docker needed. Install:
 
 ```powershell
-pip install "agent-crashtest[local] @ git+https://github.com/munendra07-tech/agent-crashtest@v0.2.1"
+pip install "agent-crashtest[local] @ git+https://github.com/munendra07-tech/agent-crashtest@v0.3.0"
 ```
 
 Before testing your agent, run `crashtest selftest`. It checks that the harness itself works on your machine, using the two example agents as controls (the unsafe one must FAIL with a duplicate in every trial, the safe one must PASS), and takes about 40 seconds:
@@ -135,7 +135,7 @@ The sink plays the outside world: each row in its `refunds` table is a refund th
 ## In CI: the GitHub Action
 
 ```yaml
-- uses: munendra07-tech/agent-crashtest@v0.2.1
+- uses: munendra07-tech/agent-crashtest@v0.3.0
   with:
     agent: path/to/my_agent.py   # or naive, stable_key
     trials: 5
