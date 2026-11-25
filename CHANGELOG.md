@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **`crashtest --version`** prints the installed version.
+- **Reports say what ran the test**: the JSON report has `report_schema` (the layout's version; keys are only added within a version) and `environment` (the agent-crashtest, `mcp` and Python versions, the OS, its release and the machine type), and the JUnit report has the same as `env_*` properties. No host name, user name, path or environment variable is recorded. The text and Markdown reports are unchanged.
+- **A stack file left by a killed `crashtest serve` is cleaned up.** `serve` now records its process ID in `.crashtest-stack.json`; when a later command finds that the process is gone, it removes the file and says so on stderr, instead of using URLs that point at nothing.
+- **CI runs the full test suite on Windows and macOS**, not only on Ubuntu.
+- New: `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1), a pull-request template, [docs/testing.md](docs/testing.md), [docs/RELEASING.md](docs/RELEASING.md) and [docs/decisions.md](docs/decisions.md). `CONTRIBUTING.md`'s good first issues are brought up to date.
+
 ## 0.3.0 (25 November 2026): connect over stdio, a control token, a test controller, a second scenario
 
 Easier to connect, harder for the agent under test to tamper with, and a second fault taken from experiment 008. No verdict, checker or contract change: every trial is still judged from the sink's rows by `crashtest.checker`, and the reference scenario's reports are byte-identical to 0.2.1's apart from the additive run metadata below.

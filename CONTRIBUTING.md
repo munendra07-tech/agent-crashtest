@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for your interest. The project is early, so the most useful contributions are bug reports, reproductions, reports of agents that failed (or passed) `crashtest run refunds`, and new fault scenarios. Issue templates are provided for a bug, a question, and "my agent failed".
+Thanks for your interest. The project is early, so the most useful contributions are bug reports, reproductions, reports of agents that failed (or passed) `crashtest run refunds`, and new fault scenarios. Issue templates are provided for a bug, a question, and "my agent failed". Everyone taking part follows the [code of conduct](CODE_OF_CONDUCT.md).
 
 ## Set up
 
@@ -30,14 +30,15 @@ mypy
 pytest
 ```
 
+[docs/testing.md](docs/testing.md) explains the suite, faster variants and what CI runs. The pull-request template has a short checklist.
+
 ## Good first issues
 
 Small, self-contained tasks, each a good first pull request. Open an issue first to say you are taking one.
 
 - **An example agent for another MCP client or framework.** A script in `examples/` with the same arguments and JSON report as `examples/stable_key_agent.py`, built on another client library or agent framework, with the result of `crashtest run refunds --agent` on it in the pull request.
-- **A "check status before retrying" example agent.** Before retrying after a timeout, the agent asks whether the refund already exists. The MCP server has no lookup tool today, so this includes adding one that reads the sink's `GET /refunds`.
-- **A clearer message when the agent script fails to start.** When every trial's agent exits with an import error, the report should say so once, at the top, instead of per trial.
-- **macOS.** Run the quickstart on macOS and report what happened; fix what breaks.
+- **Try a client guide that is not yet verified.** Follow one of the Claude Desktop, Claude Code, VS Code or Cursor guides in [docs/clients/](docs/clients/README.md) and report what happened. A pull request marking it verified, with the client version and date, is welcome.
+- **An example agent for another framework.** Like `examples/frameworks/`, with a scripted model so it needs no API key, and a CI check (issue #9).
 
 ## Rules for results
 

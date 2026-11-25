@@ -303,3 +303,24 @@ def test_selftest_environment_error_exits_2(monkeypatch, capsys):
     monkeypatch.setattr(cli, "_start_stack", no_stack)
     assert cli.main(["selftest"]) == 2
     assert "did not start" in capsys.readouterr().err
+
+
+def test_reports_say_what_ran_the_test_and_nothing_personal():
+    import getpass
+    import platform
+    import socket
+
+    run = _report(_trial())
+    data = json.loads(rr.format_json(run))
+    assert data["report_schema"] == rr.REPORT_SCHEMA
+    env = data["environment"]
+    assert set(env) == {"agent_crashtest", "mcp", "python", "os", "os_release", "machine"}
+    assert env["python"] == platform.python_version() and env["os"] == platform.system()
+    text = json.dumps(env)
+    for personal in {socket.gethostname(), getpass.getuser(), str(Path.home())}:
+        assert len(personal) < 4 or personal not in text
+    props = {
+        p.get("name"): p.get("value")
+        for p in ET.fromstring(rr.format_junit(run)).findall("properties/property")
+    }
+    assert props["env_python"] == env["python"] and props["env_mcp"] == env["mcp"]

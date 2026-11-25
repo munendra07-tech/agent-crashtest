@@ -69,8 +69,52 @@ STATUS_OF_REPORT: dict[str, SubjectStatus] = {
 }
 
 
+def _pid_alive(pid: int) -> bool:
+    """Whether a process with this ID is running. Never signals or stops it."""
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            return ctypes.get_last_error() == 5  # access denied: it exists
+        try:
+            code = ctypes.c_ulong()
+            ok = kernel32.GetExitCodeProcess(handle, ctypes.byref(code))
+            return bool(ok) and code.value == 259  # STILL_ACTIVE
+        finally:
+            kernel32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)  # signal 0 only checks; on POSIX it sends nothing
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 def _read_state(path: Path = STATE_FILE) -> dict:
-    return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    """The stack file `serve` wrote; {} if there is none or its `serve` is gone.
+
+    A `serve` that was killed (not stopped with Ctrl+C) leaves its file behind. Its
+    URLs point at nothing, so the file is removed with a note on stderr, and callers
+    fall back as if no stack were running.
+    """
+    if not path.is_file():
+        return {}
+    state = json.loads(path.read_text(encoding="utf-8"))
+    pid = state.get("pid")
+    if isinstance(pid, int) and not _pid_alive(pid):
+        print(
+            f"crashtest: removed {path}: the `crashtest serve` that wrote it (process {pid}) "
+            "is no longer running. Start `crashtest serve` again.",
+            file=sys.stderr,
+        )
+        path.unlink(missing_ok=True)
+        return {}
+    return state
 
 
 def _sink_url(explicit: str | None, state_file: Path = STATE_FILE) -> str:
@@ -100,6 +144,7 @@ def _write_state(stack: Stack) -> None:
                 "sink_url": stack.sink_url,
                 "mcp_url": stack.mcp_url,
                 "control_token": stack.control_token,
+                "pid": os.getpid(),
             },
             f,
             indent=2,
@@ -424,9 +469,24 @@ def cmd_run(args: argparse.Namespace) -> int:
     return run.exit_code
 
 
+def _version() -> str:
+    from importlib import metadata
+
+    try:
+        return metadata.version("agent-crashtest")
+    except metadata.PackageNotFoundError:
+        return "unknown"
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="crashtest", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"agent-crashtest {_version()}",
+        help="print the installed version and exit",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 

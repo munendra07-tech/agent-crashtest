@@ -118,3 +118,43 @@ def test_serve_starts_the_stack_and_writes_its_urls(tmp_path, monkeypatch):
     assert len(seen["control_token"]) >= 32  # stored for the CLI, required by the sink
     assert seen["anonymous_reset"] == 401
     assert not (tmp_path / cli.STATE_FILE).exists()  # removed on the way out
+
+
+def test_version_prints_the_installed_version(capsys):
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["--version"])
+    assert exc.value.code == 0
+    assert capsys.readouterr().out.strip() == f"agent-crashtest {cli._version()}"
+
+
+def _dead_pid() -> int:
+    import subprocess
+    import sys
+
+    proc = subprocess.Popen([sys.executable, "-c", "pass"])
+    proc.wait()
+    return proc.pid
+
+
+def test_a_stack_file_left_by_a_killed_serve_is_removed(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("CRASHTEST_SINK_URL", raising=False)
+    pid = _dead_pid()
+    assert not cli._pid_alive(pid)
+    (tmp_path / cli.STATE_FILE).write_text(json.dumps({"sink_url": "http://s:1/", "pid": pid}))
+    assert cli._sink_url(None) == cli.DOCKER_SINK_URL  # as if no stack were running
+    assert not (tmp_path / cli.STATE_FILE).exists()
+    assert f"process {pid}" in capsys.readouterr().err
+
+
+def test_a_stack_file_of_a_running_serve_is_kept(tmp_path, monkeypatch):
+    import os
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("CRASHTEST_SINK_URL", raising=False)
+    (tmp_path / cli.STATE_FILE).write_text(
+        json.dumps({"sink_url": "http://s:1/", "pid": os.getpid()})
+    )
+    assert cli._pid_alive(os.getpid())
+    assert cli._sink_url(None) == "http://s:1"
+    assert (tmp_path / cli.STATE_FILE).exists()

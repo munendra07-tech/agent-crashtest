@@ -117,6 +117,34 @@ class Trial:
         return False
 
 
+# Version of the JSON report's layout. Keys are only ever added within a version.
+REPORT_SCHEMA = "1"
+
+
+def environment() -> dict[str, str]:
+    """What ran the test, for reproducing it: versions and the OS, nothing personal.
+
+    No host name, user name, paths or environment variables.
+    """
+    import platform
+    from importlib import metadata
+
+    def version(dist: str) -> str:
+        try:
+            return metadata.version(dist)
+        except metadata.PackageNotFoundError:
+            return "unknown"
+
+    return {
+        "agent_crashtest": version("agent-crashtest"),
+        "mcp": version("mcp"),
+        "python": platform.python_version(),
+        "os": platform.system(),
+        "os_release": platform.release(),
+        "machine": platform.machine(),
+    }
+
+
 @dataclass
 class RunReport:
     agent: str
@@ -173,6 +201,8 @@ class RunReport:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "report_schema": REPORT_SCHEMA,
+            "environment": environment(),
             "scenario": self.scenario,
             "scenario_version": self.scenario_version,
             "run_id": self.run_id,
@@ -843,6 +873,7 @@ def format_junit(run: RunReport) -> str:
         ("scenario", run.scenario),
         ("scenario_version", run.scenario_version),
         ("driver", run.driver),
+        *((f"env_{k}", v) for k, v in environment().items()),
         ("agent", run.agent),
         ("result", run.result),
         ("exit_code", run.exit_code),

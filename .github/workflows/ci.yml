@@ -30,7 +30,12 @@ jobs:
 
   test-local:
     # Tests start their own stack: pip-installed PostgreSQL plus the services as subprocesses.
-    runs-on: ubuntu-latest
+    # The full suite on each OS, so platform statements rest on every test, not a smoke run.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -41,6 +46,7 @@ jobs:
       - name: Tests with coverage
         run: pytest --cov --cov-report=term-missing --cov-report=xml
       - uses: actions/upload-artifact@v4
+        if: matrix.os == 'ubuntu-latest'
         with:
           name: coverage
           path: coverage.xml
