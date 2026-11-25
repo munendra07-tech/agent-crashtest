@@ -73,7 +73,7 @@ def _pid_alive(pid: int) -> bool:
     """Whether a process with this ID is running. Never signals or stops it."""
     if pid <= 0:
         return False
-    if os.name == "nt":
+    if sys.platform == "win32":
         import ctypes
 
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)

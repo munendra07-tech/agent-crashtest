@@ -44,7 +44,12 @@ jobs:
           cache: pip
       - run: pip install -e ".[dev]"
       - name: Tests with coverage
-        run: pytest --cov --cov-report=term-missing --cov-report=xml
+        # PostgreSQL data and pytest's temporary folders under the runner's temp
+        # directory: on the Windows runner, initdb cannot set permissions on a
+        # folder inside the checkout.
+        env:
+          CRASHTEST_PGDATA: ${{ runner.temp }}/pgdata
+        run: pytest --basetemp "${{ runner.temp }}/pytest" --cov --cov-report=term-missing --cov-report=xml
       - uses: actions/upload-artifact@v4
         if: matrix.os == 'ubuntu-latest'
         with:
