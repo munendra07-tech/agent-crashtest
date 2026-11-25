@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.3.0 (prepared, not released): connect over stdio, a control token, a test controller, a second scenario
+
+Easier to connect, harder for the agent under test to tamper with, and a second fault taken from experiment 008. No verdict, checker or contract change: every trial is still judged from the sink's rows by `crashtest.checker`, and the reference scenario's reports are byte-identical to 0.2.1's apart from the additive run metadata below.
+
+- **`crashtest mcp --stdio`** serves the same refund MCP server over stdio, for clients that launch a command (Claude Desktop, IDEs, the MCP Inspector). It finds the running sink from `--sink-url`, `CRASHTEST_SINK_URL` or the stack file (`--stack-file`), and exits 2 with a message on stderr when no sink answers. CI checks on Ubuntu, Windows and macOS that the same agent gets the same verdict over stdio and over HTTP.
+- **A control token on the sink.** `/control/*` (arming faults, reset) now requires `Authorization: Bearer <token>`; `GET /refunds` (the read-only ground truth) stays open. `crashtest serve` generates the token and stores it in `.crashtest-stack.json`, never in MCP output; `arm`, `run`, `selftest`, the Action and the experiment runners pass it automatically, and agents started by `crashtest run` get an environment without it. **Docker Compose now requires `CRASHTEST_CONTROL_TOKEN`** to be set before `docker compose up`; scripts or `curl` commands that call `/control/*` directly must send the token.
+- **DNS-rebinding protection** is on by default for the HTTP MCP server: the `Host` and `Origin` headers must name `127.0.0.1`, `localhost` or `[::1]` (421 / 403 otherwise). Docker keeps it on and lists its container names in `MCP_ALLOWED_HOSTS`.
+- **Client guides** in `docs/clients/`, each marked with its verification status: the Python `mcp` client and the MCP Inspector's CLI are verified in CI (a new `inspector` job); Claude Desktop, Claude Code, VS Code, Cursor and the Inspector's web UI are not yet verified.
+- **`crashtest controller --stdio | --http`**: a separate MCP server for the developer, never for the agent, with `create_test_run`, `configure_scenario`, `arm_fault`, `get_run_status` and `get_test_report`. No reset or delete tool; token-protected over HTTP; verdicts only from the sink through the same checker and report code as `crashtest run` (a regression test checks both give the same result, verdicts and counts). `docs/controller.md`.
+- **Scenarios.** `crashtest run <scenario>` and `crashtest selftest --scenario <scenario>`: `refunds` (the reference, unchanged) and **`refunds-cut-before-request`** from experiment 008: a proxy cuts the agent's first call before it reaches the server, so nothing is refunded, yet the agent sees the same error as after a cut that follows the commit. Ground truth: the sink's rows plus the proxy's record, reported per trial as `fault_record`. `docs/scenarios.md` has its results table and limitations.
+- **Reports** carry a run ID, the scenario's name and version, and which driver produced them (`crashtest run` or the controller): additive JSON keys and JUnit properties, and one extra line in the text and Markdown reports.
+- **Framework examples** in `examples/frameworks/`: a Pydantic AI agent and a LangGraph agent, each driven by a scripted model (no API key), checked in CI (naive FAIL, stable key PASS). Frameworks that need a model key are not included.
+- **A read-only lookup tool**, contributed in PR #15: `check_refund_status(order_id)` on the refund MCP server says whether a refund exists, changing nothing, and `examples/check_status_agent.py` looks the refund up after a timeout before retrying.
+- `subjects/requirements/crewai.txt` warns that it pins a chromadb version with open critical and high advisories, used only to reproduce experiment 003.
+
 ## 0.2.1: the Docker images build again
 
 The three Dockerfiles copy `examples/`, which the 0.2.0 package build needs; `docker compose up` failed at v0.2.0. No other change: `pip install`, `crashtest run refunds`, `crashtest selftest` and the GitHub Action behave as in 0.2.0. The README's install command and Action usage now name `@v0.2.1`.

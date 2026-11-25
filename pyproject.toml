@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-crashtest"
-version = "0.2.1"
+version = "0.3.0"
 description = "Crash-consistency testbench for AI-agent tool calls"
 requires-python = ">=3.12"
 license = "MIT"

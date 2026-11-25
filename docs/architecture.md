@@ -24,7 +24,7 @@ Two more runners use the same sink and proxy: `single_call` runs one tool call t
 | Component | Module | Responsibility |
 |---|---|---|
 | Sink | `src/crashtest/sink/` | Fake payments API. Records every refund and every request. Enforces idempotency keys with a unique index. Injects the lost-response fault. |
-| Refund MCP server | `src/crashtest/refund_mcp/` | One tool, `issue_refund`. Forwards the optional key to the sink. Adds no deduplication of its own. |
+| Refund MCP server | `src/crashtest/refund_mcp/` | `issue_refund`, which forwards the optional key to the sink and adds no deduplication of its own, and the read-only `check_refund_status`. Streamable HTTP (`crashtest serve`) or stdio (`crashtest mcp --stdio`). |
 | Checker | `src/crashtest/checker.py` | The one place a verdict is decided, from the sink's count and the subject's final status. |
 | Fault proxy | `src/crashtest/faults/drop_proxy.py` | Sits between a client and the MCP server. Counts the tool calls the client sent, and when armed cuts the connection: after the sink has committed, or (experiment 008) before the request reaches the server, or mid-stream before the commit. |
 | Trial | `src/crashtest/experiment/trial.py` | One logical operation under one retry strategy and one fault. |
@@ -91,13 +91,15 @@ Not in the MVP: the scoreboard site, nightly CI matrix, real-model studies, and 
 |---|---|---|
 | Sink | `POST /refunds` | Perform a refund. Optional `Idempotency-Key` header. Returns `refund_id` and `replayed`. |
 | Sink | `GET /refunds?order_id=` | Effects and requests recorded for one order. |
-| Sink | `PUT /control/faults` | Arm a fault for one order. |
-| Sink | `POST /control/reset` | Wipe all state (test helper). |
+| Sink | `PUT /control/faults` | Arm a fault for one order. Requires the control token. |
+| Sink | `POST /control/reset` | Wipe all state (test helper). Requires the control token. |
 | Sink | `GET /health` | Liveness, including a database round trip. |
 | MCP server | tool `issue_refund(order_id, amount_cents, idempotency_key?)` | The side-effecting tool under test. |
+| MCP server | tool `check_refund_status(order_id)` | Read-only: whether a refund exists for the order. |
+| Test controller | tools `create_test_run`, `configure_scenario`, `arm_fault`, `get_run_status`, `get_test_report` | For the developer, never the agent (`crashtest controller`, [controller.md](controller.md)). |
 
 ## 6. Security notes for the test rig
 
 - Every effect is fake; nothing reaches a real payment system.
-- The MCP server disables Host-header checking so that containers can reach it by name. That setting is for this rig only.
-- The control endpoints are unauthenticated. The services must not be exposed beyond the local machine.
+- The HTTP MCP servers check the `Host` and `Origin` headers (DNS-rebinding protection): only `127.0.0.1`, `localhost` and `[::1]`, plus the container names Docker Compose lists in `MCP_ALLOWED_HOSTS`.
+- The control endpoints require a control token (since 0.3.0), which the agent under test is never given; `GET /refunds` stays open and read-only. The services must not be exposed beyond the local machine.
