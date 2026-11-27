@@ -25,6 +25,10 @@ from mcp import Client
 MAX_ATTEMPTS = 3
 
 
+async def on_progress(progress: float, total: float | None, message: str | None) -> None:
+    """Asking for progress is what makes the server stream; the values are not used."""
+
+
 async def refund(args: argparse.Namespace) -> str:
     arguments = {
         "order_id": args.order_id,
@@ -35,7 +39,10 @@ async def refund(args: argparse.Namespace) -> str:
         try:
             async with Client(args.mcp_url) as client:
                 result = await client.call_tool(
-                    "issue_refund", arguments, read_timeout_seconds=args.timeout
+                    "issue_refund",
+                    arguments,
+                    read_timeout_seconds=args.timeout,
+                    progress_callback=on_progress,  # refunds-cut-mid-stream needs a stream
                 )
             return "not_done" if result.is_error else "done"
         except (Exception, BaseExceptionGroup):

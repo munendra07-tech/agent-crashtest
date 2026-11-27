@@ -76,7 +76,7 @@ def _run(stack, agent_cmd, agent="a", trials=2, scenario=CUT) -> rr.RunReport:
 
 
 def test_the_registry():
-    assert scenarios.names() == ("refunds", CUT)
+    assert scenarios.names() == ("refunds", CUT, "refunds-cut-mid-stream")
     for s in scenarios.REGISTRY.values():
         assert s.version and s.fault and s.limitations and s.source and s.scope
         assert set(s.controls) == {"naive", "stable_key"}
@@ -180,7 +180,7 @@ def test_an_agent_that_never_calls_is_inconclusive(stack, tmp_path):
 
 
 def test_crashtest_run_and_selftest_on_the_cut(monkeypatch, stack, capsys):
-    monkeypatch.setattr(cli, "_start_stack", lambda data_dir, cleanup: stack)
+    monkeypatch.setattr(cli, "_start_stack", lambda data_dir, cleanup, *transports: stack)
     code = cli.main(["run", CUT, "--agent", "naive", "--trials", "1", "--format", "json"])
     report = json.loads(capsys.readouterr().out)
     assert (code, report["result"], report["scenario"]) == (0, "PASS", CUT)
@@ -209,7 +209,9 @@ async def test_the_controller_runs_the_cut(stack):
         async with Client(build_server(controller)) as dev:
             created = (await dev.call_tool("create_test_run", {"scenario": CUT})).structured_content
             assert created["agent_mcp_url"] != stack.mcp_url  # the proxy's
-            assert {s["name"] for s in created["scenarios"]} == set(scenarios.names())
+            assert {s["name"] for s in created["scenarios"]} == {
+                n for n, s in scenarios.REGISTRY.items() if s.controller
+            }
             run_id, order_id = created["run_id"], created["trials"][0]["order_id"]
             await dev.call_tool("arm_fault", {"run_id": run_id, "trial": 1})
             said = rr._client_report(

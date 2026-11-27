@@ -191,6 +191,14 @@ crashtest run refunds-cut-before-request --agent naive
 
 A proxy between your agent and the MCP server cuts the agent's first call before it reaches the server, so nothing is refunded and even a naive retry refunds once (PASS). The point is the error: your agent sees the same disconnect as when the cut comes after the commit, where the naive retry refunds twice (experiment 008). It cannot tell the two apart from the error, so only a stable idempotency key is safe in both (looking the refund up passes here too, but can race in a real system; see above); run both scenarios. An agent that reports "done" without a success result gets `lost` (FAIL). Ground truth: the sink's rows plus the proxy's record that the call was withheld. `crashtest selftest --scenario refunds-cut-before-request` checks the harness for it. Details and limitations: [docs/scenarios.md](docs/scenarios.md).
 
+### A third scenario: the connection cut mid-stream
+
+```powershell
+crashtest run refunds-cut-mid-stream --agent naive
+```
+
+The tool sends a progress notification, then the proxy cuts the connection before the response, while the tool is still paused before the refund; the server cancels the tool, so nothing is refunded and a retry refunds once. Seeing the call start is not evidence that it finished. Your agent's MCP client must ask for progress (`progress_callback` with the Python client), or the trial is INCONCLUSIVE. One stated server configuration (stateful SSE, no event store), from experiment 008; not yet in the test controller or the Action. Details: [docs/scenarios.md](docs/scenarios.md).
+
 ### Drive tests from your own MCP client: the test controller
 
 `crashtest controller --stdio` (or `--http`, token required) is a second MCP server, for you and never for the agent under test, with five tools: `create_test_run`, `configure_scenario`, `arm_fault`, `get_run_status` and `get_test_report`. It has no reset or delete tool. Reports carry a run ID and the scenario's name and version, and the verdict comes only from the sink, judged by the same checker and report code as `crashtest run`; a regression test checks that both give the same result, verdicts and counts for the same agent behaviour. See [docs/controller.md](docs/controller.md).
@@ -198,7 +206,7 @@ A proxy between your agent and the MCP server cuts the agent's first call before
 ## Limitations
 
 - **Client guides.** Only the Python `mcp` client (stdio and HTTP) and the MCP Inspector's CLI are verified in CI; the Claude Desktop, Claude Code, VS Code, Cursor and Inspector web-UI steps follow those clients' documentation and have not been run yet ([docs/clients/](docs/clients/README.md)). `crashtest serve` picks a free port each time, so an HTTP client's configuration must be updated after a restart.
-- **Two scenarios.** A refund through one MCP tool, with one of two faults: the first response is lost after the refund commits (`refunds`, the reference), or the connection is cut before the request reaches the server (`refunds-cut-before-request`, from experiment 008). Cuts mid-stream or during the effect, crashes of the agent's own process and other effects (bookings, inventory) are not in `crashtest run` yet. See [docs/scenarios.md](docs/scenarios.md) for each scenario's ground truth and limitations.
+- **Three scenarios.** A refund through one MCP tool, with one of three faults: the first response is lost after the refund commits (`refunds`, the reference), the connection is cut before the request reaches the server (`refunds-cut-before-request`), or it is cut mid-stream, before the commit (`refunds-cut-mid-stream`, one server configuration); both cuts are from experiment 008. Cuts during the effect, crashes of the agent's own process and other effects (bookings, inventory) are not in `crashtest run` yet. See [docs/scenarios.md](docs/scenarios.md) for each scenario's ground truth and limitations.
 - **What a PASS shows.** One correct refund per order in the sink, and the agent said `done`. It does not show that the agent received a success or reasoned correctly: the harness sees only the sink and the agent's final report. An agent that says `done` after an error passes `refunds` (the refund landed anyway) and fails `refunds-cut-before-request` (`lost`), so run both.
 - **The agent runs as a script**, once per order, with the arguments above. An agent that needs a model, credentials or a long-running process has to be wrapped in such a script.
 - **A test double, not a payment provider.** A PASS says your agent's retries are safe against this test double, a sink that enforces idempotency keys in its database; it says nothing about whether your real provider does.

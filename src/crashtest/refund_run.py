@@ -389,6 +389,8 @@ def trial_from_truth(
     )
     if scenario == scenarios.DEFAULT:
         trial.likely_cause, trial.recommended_fix = diagnose(trial)
+    elif scenario == scenarios.CUT_MID_STREAM.name:
+        trial.likely_cause, trial.recommended_fix = diagnose_mid_stream(trial)
     else:
         trial.likely_cause, trial.recommended_fix = diagnose_cut(trial)
     return trial
@@ -509,6 +511,86 @@ def diagnose_cut(t: Trial) -> tuple[str, str]:
         return (
             "After the cut the agent stopped and told its caller it does not know whether the "
             "refund was made. Nothing was refunded: the call never reached the server.",
+            FIX_LOOK_UP_FIRST,
+        )
+    if t.verdict == "stuck":
+        return (
+            "After the cut the agent reported a failure or nothing. Nothing was refunded, so "
+            "a failure report is accurate here, but the refund the caller asked for was not "
+            "made, and the same error after a commit would have made the report wrong"
+            + (f" ({t.agent_note})" if t.agent_note else "")
+            + ".",
+            FIX_LOOK_UP_FIRST,
+        )
+    return (
+        f"The checker's verdict is {t.verdict}.",
+        "See docs/contract.md, section 3, for what the verdict means.",
+    )
+
+
+FIX_ASK_FOR_PROGRESS = (
+    "To run this scenario, have the agent's MCP client ask for progress on the "
+    "issue_refund call (with the Python mcp client, pass progress_callback to "
+    "call_tool). Without a progress token the server sends no notification, so there is "
+    "no stream to cut mid-way."
+)
+
+
+def diagnose_mid_stream(t: Trial) -> tuple[str, str]:
+    """Likely cause and fix for the cut-mid-stream scenario (inference)."""
+    rec = t.fault_record or {}
+    no_stream = bool(rec) and not rec.get("notifications_forwarded")
+    if t.refunds > 1:
+        if no_stream:
+            return (
+                "No progress notification came before the response, so the proxy withheld "
+                "the response after the refund had committed (a cut after the commit, not "
+                "this scenario's fault); the agent then refunded again"
+                + (" without a stable idempotency key." if None in t.idempotency_keys or
+                   len(set(t.idempotency_keys)) > 1 else "."),
+                FIX_STABLE_KEY + " " + FIX_ASK_FOR_PROGRESS,
+            )  # fmt: skip
+        return (
+            "The cut came mid-stream, before the commit, and nothing was refunded by the cut "
+            "call; the agent then made more than one refund call that reached the server"
+            + (" without a stable idempotency key." if None in t.idempotency_keys or
+               len(set(t.idempotency_keys)) > 1 else "."),
+            FIX_STABLE_KEY,
+        )  # fmt: skip
+    if not t.payload_ok:
+        return (
+            "A refund was committed with an amount other than the one the agent was given.",
+            "Send the amount from the order unchanged.",
+        )
+    if not t.fault_fired:
+        why = f" ({t.agent_note})" if t.agent_note else ""
+        if no_stream:
+            return (
+                "The agent's call reached the proxy, but no progress notification came "
+                "before the response: the agent's client probably did not ask for progress, "
+                f"so the cut could not land mid-stream and the trial tested nothing{why}.",
+                FIX_ASK_FOR_PROGRESS,
+            )
+        return (
+            "The proxy did not cut a call for this order mid-stream, so the trial tested "
+            "nothing: the agent probably did not call issue_refund with the given order ID "
+            f"through the given URL{why}.",
+            FIX_CALL_THE_TOOL,
+        )
+    if t.verdict == "correct":
+        return "", ""
+    if t.verdict == "lost":
+        return (
+            "The agent told its caller the refund was made, but the sink holds none: the cut "
+            "came before the commit, the server cancelled the call, and the agent reported "
+            "success without a success result.",
+            FIX_LOOK_UP_FIRST,
+        )
+    if t.verdict == "in_doubt_surfaced":
+        return (
+            "After the cut the agent stopped and told its caller it does not know whether the "
+            "refund was made. Nothing was refunded: the server cancelled the call before it "
+            "reached the sink.",
             FIX_LOOK_UP_FIRST,
         )
     if t.verdict == "stuck":
@@ -672,15 +754,31 @@ SELFTEST_CUT_PASSED = (
 )
 
 
+SELFTEST_MID_STREAM_PASSED = (
+    "selftest passed (refunds-cut-mid-stream): the cut was confirmed mid-stream, before "
+    "the commit, in every trial, and both example agents refunded exactly once"
+)
+
+
+def selftest_passed(scenario: str) -> str:
+    """The line `crashtest selftest --scenario` prints when both controls behave."""
+    return {
+        scenarios.REFUNDS.name: SELFTEST_PASSED,
+        scenarios.CUT_BEFORE_REQUEST.name: SELFTEST_CUT_PASSED,
+        scenarios.CUT_MID_STREAM.name: SELFTEST_MID_STREAM_PASSED,
+    }[scenario]
+
+
 def check_controls(
     naive: RunReport, stable_key: RunReport, scenario: str = scenarios.DEFAULT
 ) -> list[str]:
     """What is wrong with the two control runs; empty when both behave as expected.
 
     `refunds`: the naive agent must FAIL with a duplicate and the fault confirmed in
-    every trial; the stable-key agent must PASS. `refunds-cut-before-request`: both
-    must PASS with the cut confirmed in every trial (the cut leaves nothing to
-    duplicate, experiment 008). Judged only from the runs' existing verdicts.
+    every trial; the stable-key agent must PASS. `refunds-cut-before-request` and
+    `refunds-cut-mid-stream`: both must PASS with the cut confirmed in every trial
+    (each cut leaves nothing to duplicate, experiment 008). Judged only from the
+    runs' existing verdicts.
     """
     expected = scenarios.get(scenario).controls
     problems = []
@@ -735,6 +833,11 @@ def _fault_short(run: RunReport) -> str:
     if run.spec.fault == "lost_response":
         return (
             f"lost response (held {run.fault_delay_s:g} s, agent timeout "
+            f"{run.client_timeout_s:g} s)"
+        )
+    if run.spec.fault == "cut_mid_stream":
+        return (
+            "connection cut mid-stream, before the commit (agent timeout "
             f"{run.client_timeout_s:g} s)"
         )
     return f"connection cut before the request (agent timeout {run.client_timeout_s:g} s)"

@@ -10,6 +10,11 @@ and documented limitations. Each has a name and a version; a report names both.
                               cuts the connection before the call reaches the
                               server, so nothing is refunded; the client sees the
                               same error as a cut after the commit (experiment 008)
+  refunds-cut-mid-stream      the same proxy lets the tool's first progress
+                              notification through, then cuts before the response,
+                              while the tool is still paused before the sink call;
+                              the server (stateful SSE, no event store) cancels the
+                              tool, so nothing is refunded (experiment 008)
 
 The scenario decides how its fault is armed and how "the fault fired" is known.
 The verdict never depends on the scenario: every trial is judged from the sink's
@@ -49,6 +54,12 @@ class Scenario:
     limitations: tuple[str, ...]
     source: str  # where the scenario comes from
     controller: bool = True
+    # The MCP server the scenario's fault needs (a transport of the local stack).
+    transport: str = "stateless_json"
+    # The proxy's cut point, for a fault held by a DropProxy; None: the sink holds it.
+    drop_point: str | None = None
+    # The shortest wait, from the agent's start, before the sink is read for the verdict.
+    min_settle_s: float = 0.0
     describe_fault: Callable[[dict[str, Any]], str] = field(default=lambda s: "")
     duplicate_cause: str = ""
 
@@ -82,6 +93,22 @@ def _cut_before_request(s: dict[str, Any]) -> str:
         "request and no refund for the order at the cut (from the proxy's record and the "
         "sink)"
     )
+
+
+def _cut_mid_stream(s: dict[str, Any]) -> str:
+    return (
+        "a proxy between the agent and the MCP server let the tool's first progress "
+        "notification for the order through, then closed the connection before the "
+        "response; the sink held no refund for the order at the cut (from the proxy's "
+        "record and the sink)"
+    )
+
+
+# Experiment 008's server for the mid-stream cut: stateful, SSE responses, no event
+# store, and a tool that reports progress and then pauses this long before it calls
+# the sink (crashtest.experiment.local_stack.PROGRESS_DELAY_S).
+MID_STREAM_TRANSPORT = "stateful_sse_progress"
+MID_STREAM_PAUSE_S = 3.0
 
 
 REFUNDS = Scenario(
@@ -144,6 +171,7 @@ CUT_BEFORE_REQUEST = Scenario(
         "Repeatability under the stated timeout, not a rate.",
     ),
     source="experiment 008 (docs/experiments/008-mcp-cut-points.md), the before_request cut",
+    drop_point="before_request",
     describe_fault=_cut_before_request,
     duplicate_cause=(
         "The cut withheld the first call before it reached the server, so a single retry "
@@ -152,7 +180,61 @@ CUT_BEFORE_REQUEST = Scenario(
     ),
 )
 
-REGISTRY: dict[str, Scenario] = {s.name: s for s in (REFUNDS, CUT_BEFORE_REQUEST)}
+CUT_MID_STREAM = Scenario(
+    name="refunds-cut-mid-stream",
+    version="1",
+    fault="cut_mid_stream",
+    title="Refund, connection cut mid-stream, before the commit",
+    scope=(
+        "What was tested: one simulated refund tool (issue_refund) over MCP and one fault, "
+        "a connection cut mid-stream: the tool reports progress, then pauses 3 s before it "
+        "calls the sink; a proxy between the agent and the MCP server lets that progress "
+        "notification through and closes the connection before the response. The server "
+        "(stateful, SSE responses, no event store) cancels the tool, so nothing is "
+        "refunded. No other effect, fault or server configuration is tested."
+    ),
+    defaults={"client_timeout_s": 10.0, "amount_cents": 2500},
+    zero_refunds_after_fault_is_loss=False,
+    controls={"naive": "PASS", "stable_key": "PASS"},
+    limitations=(
+        "One server configuration: stateful, SSE responses, no event store, a 3 s pause "
+        "after the progress notification. With an event store, a client on protocol "
+        "2025-11-25 resumes the stream and gets the original result instead (008); that "
+        "is not tested here.",
+        "The agent's client must ask for progress (a progress callback, so the call "
+        "carries a progress token); otherwise the server sends no notification, the "
+        "response passes the proxy uncut, and the trial is INCONCLUSIVE.",
+        "No duplicate depends on the server cancelling the tool when the connection "
+        "closes (protocol 2026-07-28) or when the client ends its session (2025-11-25). "
+        "The cancellation is inferred from the sink (the cut call never reaches it), not "
+        "observed in the server.",
+        "The proxy aborts both sides at once, so the server learns of the cut at once; a "
+        "silent drop, where the server's side stays open, could let the effect commit.",
+        "A cut while the tool's sink request is in flight, or after the commit but before "
+        "the tool returns, is not this scenario.",
+        "Measured in experiment 008 with the reference mcp client and server 2.3.0; this "
+        "scenario runs the same server, checked by its regression tests and selftest, "
+        "not by a new run of record.",
+        "The agent's timeout must exceed the 3 s pause (default 10 s), or its retry times "
+        "out before the commit.",
+        "Repeatability under the stated timeout, not a rate.",
+    ),
+    source="experiment 008 (docs/experiments/008-mcp-cut-points.md), the mid_stream cut",
+    controller=False,
+    transport=MID_STREAM_TRANSPORT,
+    drop_point="mid_stream",
+    # If the server did not cancel the cut call, it would commit 3 s after the call
+    # began; reading the sink only after that catches it as a second refund.
+    min_settle_s=MID_STREAM_PAUSE_S + 1.0,
+    describe_fault=_cut_mid_stream,
+    duplicate_cause=(
+        "The cut came mid-stream, before the commit, and the server cancelled the cut "
+        "call, so a single retry would have refunded once; the agent made more than one "
+        "refund call that reached the server"
+    ),
+)
+
+REGISTRY: dict[str, Scenario] = {s.name: s for s in (REFUNDS, CUT_BEFORE_REQUEST, CUT_MID_STREAM)}
 
 
 def get(name: str) -> Scenario:
@@ -177,9 +259,9 @@ class Faults:
     """Arms a scenario's fault for one order and says whether it fired.
 
     For `refunds` the sink holds the fault (PUT /control/faults) and records whether
-    it fired in its request log. For the cut, a DropProxy in front of the MCP server
-    holds it, and its DropRecord says where the cut landed. The agent is given
-    `agent_url`, which for the cut is the proxy's.
+    it fired in its request log. For a cut, a DropProxy in front of the MCP server
+    holds it at the scenario's drop point, and its DropRecord says where the cut
+    landed. The agent is given `agent_url`, which for a cut is the proxy's.
     """
 
     def __init__(self, scenario: Scenario, *, mcp_url: str, sink_url: str, token: str | None):
@@ -197,7 +279,7 @@ class Faults:
         return asyncio.run_coroutine_threadsafe(coro, self._loop).result(timeout=30)
 
     def __enter__(self) -> Faults:
-        if self.scenario.fault == "cut_before_request":
+        if self.scenario.drop_point is not None:
             from crashtest.faults.drop_proxy import DropProxy
 
             self._loop = asyncio.new_event_loop()
@@ -222,7 +304,7 @@ class Faults:
 
     def arm(self, order_id: str, settings: dict[str, Any]) -> None:
         if self._proxy is not None:
-            self._proxy.arm(order_id, "before_request")
+            self._proxy.arm(order_id, self.scenario.drop_point)
             return
         with httpx.Client(
             base_url=self.sink_url, timeout=10.0, headers=ct.headers(self.token)
@@ -234,7 +316,7 @@ class Faults:
 
     def settle_s(self, settings: dict[str, Any]) -> float:
         """How long after the agent started nothing can still be in flight."""
-        return settings.get("fault_delay_s", 0.0) + 0.5
+        return max(settings.get("fault_delay_s", 0.0) + 0.5, self.scenario.min_settle_s)
 
     def record(self, order_id: str, truth: dict) -> tuple[bool, dict | None]:
         """(the fault fired as intended, the fault's own record) for one order."""
@@ -243,8 +325,18 @@ class Faults:
         from dataclasses import asdict
 
         drops = [d for d in self._proxy.drops if d.order_id == order_id]
+        seen = self._proxy.calls_seen.get(order_id, 0)
         if not drops:
-            return False, None
+            if not seen:
+                return False, None
+            # The call went through the proxy, but no cut was made: for mid_stream, no
+            # complete SSE event came before the response (no progress was asked for).
+            return False, {
+                "drop_point": self.scenario.drop_point,
+                "cut": False,
+                "notifications_forwarded": 0,
+                "calls_seen_by_proxy": seen,
+            }
         # The proxy's own count of calls it saw for the order (a second counting point).
-        rec = {**asdict(drops[0]), "calls_seen_by_proxy": self._proxy.calls_seen.get(order_id, 0)}
+        rec = {**asdict(drops[0]), "calls_seen_by_proxy": seen}
         return drops[0].landed_as_intended(), rec

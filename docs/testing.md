@@ -45,7 +45,7 @@ docker compose down -v
 |---|---|
 | Verdicts and results (PASS, WARN, FAIL, INCONCLUSIVE; exit codes 0 to 3) | `test_verdict_properties.py`, `test_checker.py`, `test_run_refunds.py` |
 | The CLI (`serve`, `arm`, `verdict`, `run`, `selftest`, `--version`, stale stack files) | `test_cli.py`, `test_run_refunds.py` |
-| Scenarios (`refunds`, `refunds-cut-before-request`) | `test_scenarios.py`, `test_cut_points.py`, `test_drop_proxy_sink.py` |
+| Scenarios (`refunds`, `refunds-cut-before-request`, `refunds-cut-mid-stream`) | `test_scenarios.py`, `test_scenario_mid_stream.py`, `test_cut_points.py`, `test_drop_proxy_sink.py` |
 | The MCP server over stdio and HTTP, the control token, DNS-rebinding protection | `test_mcp_refund.py`, `test_connect_security.py` |
 | The test controller | `test_controller.py` |
 | The sink (the ground truth) | `test_sink.py` |

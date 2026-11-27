@@ -122,8 +122,15 @@ class Controller:
         self, *, scenario: str = scenarios.DEFAULT, trials: int = 1, agent: str = "manual"
     ) -> dict[str, Any]:
         found = SCENARIOS.get(scenario)
+        known = [name for name, s in SCENARIOS.items() if s.controller]
         if found is None:
-            raise ControllerError(f"unknown scenario {scenario!r}; known: {', '.join(SCENARIOS)}")
+            raise ControllerError(f"unknown scenario {scenario!r}; known: {', '.join(known)}")
+        if not found.controller:
+            raise ControllerError(
+                f"the controller does not run {scenario!r} yet (its fault needs an MCP server "
+                f"`crashtest serve` does not start); use `crashtest run {scenario}`. "
+                f"The controller runs: {', '.join(known)}"
+            )
         if not 1 <= trials <= 100:
             raise ControllerError("trials must be 1 to 100")
         run = ControllerRun(

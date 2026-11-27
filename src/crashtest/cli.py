@@ -365,8 +365,11 @@ def cmd_controller(args: argparse.Namespace) -> int:
     return 0
 
 
-def _start_stack(data_dir: str, cleanup: ExitStack) -> Stack:
-    """Start the local stack for `run` and `selftest`; a failure is a SetupError (exit 2)."""
+def _start_stack(data_dir: str, cleanup: ExitStack, transports: tuple[str, ...] = ()) -> Stack:
+    """Start the local stack for `run` and `selftest`; a failure is a SetupError (exit 2).
+
+    `transports`: MCP servers beyond the default one that a scenario needs.
+    """
     from crashtest import refund_run as rr
 
     print(
@@ -377,7 +380,9 @@ def _start_stack(data_dir: str, cleanup: ExitStack) -> Stack:
     try:
         from crashtest.experiment.local_stack import local_stack
 
-        return cleanup.enter_context(local_stack(Path(data_dir).resolve()))
+        return cleanup.enter_context(
+            local_stack(Path(data_dir).resolve(), transports=transports or ("stateless_json",))
+        )
     except ImportError as exc:
         raise rr.SetupError(
             "the local stack needs the 'local' extra: pip install "
@@ -387,23 +392,40 @@ def _start_stack(data_dir: str, cleanup: ExitStack) -> Stack:
         raise rr.SetupError(f"the local stack did not start: {exc}") from exc
 
 
+def _scenario_mcp_url(stack: Stack, spec: scenarios.Scenario) -> str:
+    """The MCP server a scenario's fault needs (the default one for most)."""
+    from crashtest import refund_run as rr
+
+    if spec.transport == "stateless_json":
+        return stack.mcp_url
+    url = stack.mcp_urls.get(spec.transport)
+    if not url:
+        raise rr.SetupError(
+            f"the {spec.name} scenario needs the {spec.transport} MCP server, which this "
+            "stack does not serve"
+        )
+    return url
+
+
 def cmd_selftest(args: argparse.Namespace) -> int:
     from crashtest import refund_run as rr
 
+    spec = scenarios.get(args.scenario)
     try:
         if args.trials < 1:
             raise rr.SetupError("--trials must be at least 1")
         runs: dict[str, rr.RunReport] = {}
         with ExitStack() as cleanup:
-            stack = _start_stack(args.data_dir, cleanup)
+            stack = _start_stack(args.data_dir, cleanup, (spec.transport,))
             for agent in ("naive", "stable_key"):
                 print(f"Control: the {agent} example agent", file=sys.stderr, flush=True)
                 runs[agent] = rr.run_refunds(
                     agent=agent,
                     agent_cmd=[sys.executable, str(rr.find_builtin_agent(agent))],
-                    mcp_url=stack.mcp_url,
+                    mcp_url=_scenario_mcp_url(stack, spec),
                     sink_url=stack.sink_url,
                     trials=args.trials,
+                    client_timeout_s=spec.defaults["client_timeout_s"],
                     control_token=stack.control_token,
                     scenario=args.scenario,
                 )
@@ -412,7 +434,7 @@ def cmd_selftest(args: argparse.Namespace) -> int:
         return rr.EXIT_ENVIRONMENT
     problems = rr.check_controls(runs["naive"], runs["stable_key"], args.scenario)
     if not problems:
-        print(rr.SELFTEST_PASSED if args.scenario == "refunds" else rr.SELFTEST_CUT_PASSED)
+        print(rr.selftest_passed(args.scenario))
         return 0
     print("selftest FAILED: the harness, not your agent, is at fault on this machine.")
     for problem in problems:
@@ -424,25 +446,29 @@ def cmd_selftest(args: argparse.Namespace) -> int:
 def cmd_run(args: argparse.Namespace) -> int:
     from crashtest import refund_run as rr
 
+    spec = scenarios.get(args.scenario)
+    client_timeout = (
+        spec.defaults["client_timeout_s"] if args.client_timeout is None else args.client_timeout
+    )
     try:
         if args.trials < 1:
             raise rr.SetupError("--trials must be at least 1")
         lost_response = args.scenario == "refunds"
-        if lost_response and args.client_timeout >= args.fault_delay:
+        if lost_response and client_timeout >= args.fault_delay:
             raise rr.SetupError(
                 "--client-timeout must be shorter than --fault-delay, or no response is lost"
             )
         agent_path = rr.resolve_agent(args.agent)
         agent_cmd = [args.python or sys.executable, str(agent_path)]
         with ExitStack() as cleanup:
-            stack = _start_stack(args.data_dir, cleanup)
+            stack = _start_stack(args.data_dir, cleanup, (spec.transport,))
             run = rr.run_refunds(
                 agent=args.agent,
                 agent_cmd=agent_cmd,
-                mcp_url=stack.mcp_url,
+                mcp_url=_scenario_mcp_url(stack, spec),
                 sink_url=stack.sink_url,
                 trials=args.trials,
-                client_timeout_s=args.client_timeout,
+                client_timeout_s=client_timeout,
                 fault_delay_s=args.fault_delay,
                 amount_cents=args.amount_cents,
                 fail_on_report_mismatch=args.fail_on_report_mismatch,
@@ -574,9 +600,11 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument(
         "scenario",
         choices=scenarios.names(),
-        help="refunds (the reference: a lost response after the commit) or "
+        help="refunds (the reference: a lost response after the commit), "
         "refunds-cut-before-request (the connection is cut before the request reaches the "
-        "server; experiment 008). See docs/scenarios.md",
+        "server) or refunds-cut-mid-stream (cut after a progress notification, before the "
+        "commit; the server cancels the tool); both cuts from experiment 008. See "
+        "docs/scenarios.md",
     )
     run.add_argument(
         "--agent",
@@ -601,8 +629,9 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument(
         "--client-timeout",
         type=float,
-        default=2.0,
-        help="the timeout passed to the agent, in seconds (default 2)",
+        default=None,
+        help="the timeout passed to the agent, in seconds (default: the scenario's, 2 s; "
+        "10 s for refunds-cut-mid-stream, whose tool pauses 3 s)",
     )
     run.add_argument(
         "--fault-delay",
@@ -632,7 +661,8 @@ def build_parser() -> argparse.ArgumentParser:
         choices=scenarios.names(),
         default="refunds",
         help="whose controls to run (default refunds: the naive agent must FAIL, the "
-        "stable-key one PASS; refunds-cut-before-request: both must PASS, the cut confirmed)",
+        "stable-key one PASS; refunds-cut-before-request and refunds-cut-mid-stream: both "
+        "must PASS, the cut confirmed)",
     )
     selftest.add_argument(
         "--data-dir", default=".crashtest-pgdata", help="where PostgreSQL keeps its data"

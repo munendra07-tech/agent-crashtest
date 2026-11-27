@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **A third scenario, `refunds-cut-mid-stream`** (experiment 008's `mid_stream` cut): the tool sends a progress notification and pauses; a proxy lets the notification through and cuts before the response; the server (stateful SSE, no event store, stated in the scenario) cancels the tool, so nothing is refunded. `crashtest run refunds-cut-mid-stream` and `crashtest selftest --scenario refunds-cut-mid-stream` (both example agents must PASS with the cut confirmed). The agent's client must ask for progress, or the trial is INCONCLUSIVE with that fix in the report. Its default agent timeout is 10 s. Not yet in the test controller (which says so) or the Action. No verdict or checker change.
+- **The example agents ask for progress** on `issue_refund` (a no-op `progress_callback`), which the mid-stream scenario needs; the other scenarios' servers send no progress, so their results are unchanged.
+- `crashtest run --client-timeout` now defaults to the scenario's value (2 s, as before, for the first two scenarios).
+- A slow-response scenario was considered and not added: `refunds` already is one (docs/scenarios.md, docs/decisions.md).
+
 ## 0.3.1 (27 November 2026): the Action runs both scenarios, honest PASS reports, quieter output
 
 A patch release. No verdict, checker or contract change, and no change of result or exit code for any run: every trial is still judged from the sink's rows by `crashtest.checker` (the verdict-property tests check every case).

@@ -182,7 +182,7 @@ NEVER_CALLS_AGENT = 'import json; print(json.dumps({"report": "done"}))\n'
 
 def _cli_run(monkeypatch, stack, capsys, tmp_path, agent: str, *extra: str):
     """Run `crashtest run refunds` through cli.main against the shared test stack."""
-    monkeypatch.setattr(cli, "_start_stack", lambda data_dir, cleanup: stack)
+    monkeypatch.setattr(cli, "_start_stack", lambda data_dir, cleanup, *transports: stack)
     code = cli.main(
         ["run", "refunds", "--agent", agent, "--trials", "1", *FAST, "--format", "json", *extra]
     )
