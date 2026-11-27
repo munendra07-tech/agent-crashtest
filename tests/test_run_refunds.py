@@ -45,7 +45,7 @@ def test_the_stable_key_agent_passes(stack):
     run = _run(stack, "stable_key")
     assert (run.result, run.exit_code) == ("PASS", 0)
     assert [(t.refunds, t.requests, t.verdict) for t in run.trials] == [(1, 2, "correct")] * 2
-    assert run.causes == run.fixes == []
+    assert run.causes == run.fixes == run.caveats == []
 
 
 def _agent(tmp_path: Path, body: str) -> str:
@@ -324,3 +324,13 @@ def test_reports_say_what_ran_the_test_and_nothing_personal():
         for p in ET.fromstring(rr.format_junit(run)).findall("properties/property")
     }
     assert props["env_python"] == env["python"] and props["env_mcp"] == env["mcp"]
+
+
+def test_the_check_status_agent_passes_with_the_lookup_caveat(stack):
+    """A lookup avoided the duplicate, but nothing enforced it: the report says so."""
+    agent = str(ROOT / "examples" / "check_status_agent.py")
+    run = _run(stack, agent, trials=1)
+    assert (run.result, run.exit_code) == ("PASS", 0)
+    assert run.trials[0].idempotency_keys == [None]
+    assert run.caveats == [rr.CAVEAT_NO_KEY_LOST_RESPONSE]
+    assert "nothing to fix" not in rr.format_text(run)

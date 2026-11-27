@@ -221,3 +221,74 @@ def test_cli_run_warn_exits_0_unless_asked(monkeypatch, stack, capsys, tmp_path)
         monkeypatch, stack, capsys, tmp_path, agent, "--fail-on-report-mismatch"
     )
     assert (code, report["result"]) == (1, "WARN")
+
+
+# --- caveats: what a PASS does not show (never a change of result) -------------------
+
+
+def _keyed(keys: list[str | None], scenario: str = "refunds", **trial) -> rr.RunReport:
+    """A one-trial run with one correct refund and these idempotency keys in the log."""
+    t = rr.Trial(
+        number=1,
+        order_id=ORDER,
+        refunds=trial.get("refunds", 1),
+        requests=len(keys),
+        idempotency_keys=keys,
+        fault_fired=True,
+        client_report="done",
+        report_matches_sink=True,
+        verdict=trial.get("verdict", "correct"),
+        payload_ok=True,
+        agent_exit_code=0,
+        agent_note="",
+        elapsed_s=0.0,
+    )
+    return rr.summarise(
+        rr.RunReport(
+            agent="x",
+            trials=[t],
+            client_timeout_s=2,
+            fault_delay_s=5,
+            amount_cents=AMOUNT,
+            scenario=scenario,
+        )
+    )
+
+
+def test_a_pass_without_any_idempotency_key_carries_the_lookup_caveat():
+    run = _keyed([None])
+    assert (run.result, run.exit_code) == ("PASS", 0)
+    assert run.caveats == [rr.CAVEAT_NO_KEY_LOST_RESPONSE] and run.fixes == []
+    text = rr.format_text(run)
+    assert rr.CAVEAT_NO_KEY_LOST_RESPONSE in text and "nothing to fix" not in text
+    assert rr.CAVEAT_NO_KEY_LOST_RESPONSE in rr.format_markdown(run)
+    assert json.loads(rr.format_json(run))["caveats"] == run.caveats
+    assert f'name="caveat" value="{run.caveats[0]}"' in rr.format_junit(run)
+
+
+def test_the_cut_scenario_has_its_own_caveat():
+    run = _keyed([None], scenario="refunds-cut-before-request")
+    assert run.result == "PASS" and run.caveats == [rr.CAVEAT_NO_KEY_CUT]
+
+
+def test_a_pass_with_a_key_has_no_caveat():
+    run = _keyed(["refund-o", "refund-o"])
+    assert run.result == "PASS" and run.caveats == []
+    assert "nothing to fix in this scenario" in rr.format_text(run)
+
+
+def test_no_caveat_without_a_pass():
+    assert _keyed([None, None], refunds=2, verdict="duplicate").caveats == []
+    assert _keyed([None], verdict="stuck").caveats == []
+
+
+@pytest.mark.parametrize("flag", [False, True])
+def test_caveats_never_change_a_result(flag):
+    for combo in itertools.product(CASES, repeat=1):
+        ts = [_trial(1, combo[0])]
+        for t in ts:
+            t.idempotency_keys = [None] * max(t.requests, 1)
+        r = _summarise(ts, flag)
+        plain = _summarise([_trial(1, combo[0])], flag)
+        assert (r.result, r.exit_code, r.summary) == (plain.result, plain.exit_code, plain.summary)
+        assert bool(r.caveats) is (r.result == "PASS")

@@ -23,6 +23,7 @@ idempotency key to the sink as a header, the way a payments client would.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from typing import Literal, cast, get_args
 
@@ -30,6 +31,7 @@ import httpx
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import BaseModel
+from starlette.requests import ClientDisconnect
 
 from crashtest.refund_mcp.event_store import InMemoryEventStore
 
@@ -158,7 +160,33 @@ def run_stdio(sink_url: str) -> None:
     mcp.run("stdio")
 
 
+DISCONNECT_NOTE = (
+    "client disconnected before its request was read; no tool was called "
+    "(expected when a scenario cuts the connection before the request)"
+)
+
+
+class ExpectedDisconnectFilter(logging.Filter):
+    """Turn the traceback of a connection closed before its request into one line.
+
+    When a client's connection closes before the server has read the request body
+    (the `refunds-cut-before-request` scenario does this on purpose), the MCP SDK
+    raises `ClientDisconnect` and uvicorn logs "Exception in ASGI application"
+    with a full traceback. Nothing failed: no tool was called. Every other error
+    keeps its traceback.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        exc = record.exc_info[1] if record.exc_info else None
+        if isinstance(exc, ClientDisconnect):
+            record.msg, record.args = DISCONNECT_NOTE, ()
+            record.exc_info, record.exc_text = None, None
+            record.levelno, record.levelname = logging.INFO, "INFO"
+        return True
+
+
 def main() -> None:
+    logging.getLogger("uvicorn.error").addFilter(ExpectedDisconnectFilter())
     host = os.environ.get("MCP_HOST", "127.0.0.1")
     port = int(os.environ.get("MCP_PORT", "8102"))
     mcp.run(

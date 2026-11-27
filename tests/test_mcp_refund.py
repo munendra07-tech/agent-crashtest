@@ -114,3 +114,34 @@ async def test_end_of_run_recheck_flags_a_refund_that_landed_after_the_trial(sta
     assert await recheck_at_end(stack.sink_url, [result, untouched]) == 1
     assert result.changed_by_end_of_run is True
     assert untouched.changed_by_end_of_run is False
+
+
+def test_an_expected_disconnect_is_logged_as_one_line_without_a_traceback():
+    import logging
+
+    from starlette.requests import ClientDisconnect
+
+    from crashtest.refund_mcp import server
+
+    def record(exc: BaseException) -> logging.LogRecord:
+        return logging.LogRecord(
+            "uvicorn.error",
+            logging.ERROR,
+            __file__,
+            1,
+            "Exception in ASGI application",
+            (),
+            (type(exc), exc, None),
+        )
+
+    f = server.ExpectedDisconnectFilter()
+    quiet = record(ClientDisconnect())
+    assert f.filter(quiet)
+    assert (quiet.getMessage(), quiet.exc_info, quiet.levelname) == (
+        server.DISCONNECT_NOTE,
+        None,
+        "INFO",
+    )
+    loud = record(ValueError("a real error"))
+    assert f.filter(loud)
+    assert loud.exc_info is not None and loud.levelname == "ERROR"

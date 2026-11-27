@@ -29,7 +29,7 @@ crashtest selftest
 ```
 
 ```text
-selftest passed: the harness detects a duplicate refund and passes a safe agent; your own agent's result can be trusted on this machine
+selftest passed: on this machine the harness detects a duplicate refund and passes a safe agent, so its counts for your own agent are reliable here; a PASS covers only this scenario, not your agent's safety in general
 ```
 
 If a control misbehaves, it says which one, that the harness (not your agent) is at fault, and exits 1; an environment error exits 2.
@@ -141,6 +141,8 @@ The sink plays the outside world: each row in its `refunds` table is a refund th
     trials: 5
     fail-on-duplicate-effect: true
 ```
+
+**Not yet released (on `main`, in the next release): a `scenario` input.** `scenario: all` runs both scenarios, one after the other, and the step's result is the worse of the two. Use it: an agent that reports "done" after an error, without retrying, passes `refunds` alone (the refund had committed) and fails the connection cut (nothing had). `scenario: refunds` stays the default.
 
 The Action installs the package with Python 3.12, runs `crashtest run refunds`, writes the JUnit report to `crashtest-junit.xml` in the workspace and the Markdown report to the job summary, and fails the step on a duplicate (or lost) refund. With `fail-on-duplicate-effect: false` it reports and passes. Its outputs are `result`, `exit-code` and `junit-file`. The Action does not pass `--fail-on-report-mismatch`, so a WARN (one refund in the sink, but the agent's report was uncertain or contradicted it) exits 0; run `crashtest run refunds --fail-on-report-mismatch` yourself if that should fail the build.
 

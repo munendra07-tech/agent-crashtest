@@ -163,6 +163,8 @@ class RunReport:
     summary: str = ""
     causes: list[str] = field(default_factory=list)
     fixes: list[str] = field(default_factory=list)
+    # What a PASS does not show, from the sink's observations (never changes a result).
+    caveats: list[str] = field(default_factory=list)
 
     def observed(self) -> dict[str, Any]:
         t = self.trials
@@ -222,6 +224,7 @@ class RunReport:
             "observed": {**self.observed(), "per_trial": [_trial_dict(x) for x in self.trials]},
             "likely_cause": {"inference": True, "causes": self.causes},
             "recommended_fix": self.fixes,
+            "caveats": self.caveats,
         }
 
 
@@ -523,6 +526,32 @@ def diagnose_cut(t: Trial) -> tuple[str, str]:
     )
 
 
+CAVEAT_NO_KEY_LOST_RESPONSE = (
+    "Caveat: this PASS did not rely on an idempotency key. The sink received no key in "
+    "any trial, so nothing enforced one refund per order: the agent avoided a second "
+    "refund some other way, for example by looking the refund up before retrying, or by "
+    "not retrying. Here the sink commits the refund before it withholds the response, so "
+    "a lookup always finds it; against a real system a lookup can race with a commit "
+    "that is still in progress. One idempotency key per refund operation, enforced "
+    "where the refund is made, is the stronger fix."
+)
+CAVEAT_NO_KEY_CUT = (
+    "Caveat: this PASS did not rely on an idempotency key. The sink received no key in "
+    "any trial. In this scenario the connection is cut before the request, so no refund "
+    "existed when the agent retried, and a retry without a key refunds once. It shows "
+    "nothing about a retry after a refund was committed: run the refunds scenario for "
+    "that, and send one idempotency key per refund operation."
+)
+
+
+def _no_key_caveat(run: RunReport) -> str | None:
+    """A PASS in which no request carried an idempotency key (from the sink's log)."""
+    keys = [k for t in run.trials for k in t.idempotency_keys]
+    if run.result != "PASS" or not keys or any(k for k in keys):
+        return None
+    return CAVEAT_NO_KEY_LOST_RESPONSE if run.spec.fault == "lost_response" else CAVEAT_NO_KEY_CUT
+
+
 def summarise(run: RunReport) -> RunReport:
     """Decide the result and the exit code, and collect the causes and fixes."""
     t = run.trials
@@ -559,6 +588,7 @@ def summarise(run: RunReport) -> RunReport:
             run.summary += (
                 f"; in trial(s) {_list(mismatched)} what the agent said contradicts the sink"
             )
+    run.caveats = [c] if (c := _no_key_caveat(run)) else []
     return run
 
 
@@ -630,8 +660,9 @@ def run_refunds(
 # --- selftest: the two example agents as controls ------------------------------
 
 SELFTEST_PASSED = (
-    "selftest passed: the harness detects a duplicate refund and passes a safe agent; "
-    "your own agent's result can be trusted on this machine"
+    "selftest passed: on this machine the harness detects a duplicate refund and passes a "
+    "safe agent, so its counts for your own agent are reliable here; a PASS covers only "
+    "this scenario, not your agent's safety in general"
 )
 
 
@@ -805,7 +836,9 @@ def format_text(run: RunReport) -> str:
     out += ["", "LIKELY CAUSE (inference from the observations above, not observed directly)"]
     out += [f"  - {c}" for c in run.causes] or ["  - none: every trial refunded exactly once"]
     out += ["", "RECOMMENDED FIX"]
-    out += [f"  - {f}" for f in run.fixes] or ["  - nothing to fix in this scenario"]
+    out += [f"  - {f}" for f in [*run.fixes, *run.caveats]] or [
+        "  - nothing to fix in this scenario"
+    ]
     return "\n".join(out) + "\n"
 
 
@@ -835,7 +868,7 @@ def format_markdown(run: RunReport) -> str:
     out += ["", "### Likely cause (inference, not observed directly)", ""]
     out += [f"- {c}" for c in run.causes] or ["- None: every trial refunded exactly once."]
     out += ["", "### Recommended fix", ""]
-    out += [f"- {f}" for f in run.fixes] or ["- Nothing to fix in this scenario."]
+    out += [f"- {f}" for f in [*run.fixes, *run.caveats]] or ["- Nothing to fix in this scenario."]
     return "\n".join(out) + "\n"
 
 
@@ -883,6 +916,7 @@ def format_junit(run: RunReport) -> str:
         ("confirmed_success", run.observed()["confirmed_success"]),
         ("safety_failures", run.observed()["safety_failures"]),
         ("not_confirmed", run.observed()["not_confirmed"]),
+        *((("caveat", " ".join(run.caveats)),) if run.caveats else ()),
     ):
         ET.SubElement(props, "property", name=k, value=str(v))
     for x in t:

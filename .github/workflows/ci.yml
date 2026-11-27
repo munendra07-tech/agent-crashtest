@@ -236,8 +236,34 @@ jobs:
           agent: naive
           trials: "3"
           fail-on-duplicate-effect: "false"
+      - name: An agent that says done after an error passes refunds alone
+        id: lazy_refunds
+        uses: ./
+        with:
+          agent: tests/data/done_after_error_agent.py
+          trials: "2"
+      - name: ...and fails with scenario all (the connection cut)
+        id: lazy_all
+        uses: ./
+        with:
+          agent: tests/data/done_after_error_agent.py
+          trials: "2"
+          scenario: all
+          fail-on-duplicate-effect: "false"
+      - name: The stable-key agent passes both scenarios
+        id: safe_all
+        uses: ./
+        with:
+          agent: stable_key
+          trials: "2"
+          scenario: all
       - name: Check the outputs
         env:
+          LAZY_REFUNDS: ${{ steps.lazy_refunds.outputs.result }}
+          LAZY_ALL: ${{ steps.lazy_all.outputs.result }}
+          LAZY_ALL_CODE: ${{ steps.lazy_all.outputs.exit-code }}
+          LAZY_ALL_JUNIT: ${{ steps.lazy_all.outputs.junit-file }}
+          SAFE_ALL: ${{ steps.safe_all.outputs.result }}
           SAFE: ${{ steps.safe.outputs.result }}
           UNSAFE: ${{ steps.unsafe.outputs.result }}
           UNSAFE_CODE: ${{ steps.unsafe.outputs.exit-code }}
@@ -247,3 +273,9 @@ jobs:
           test "$UNSAFE" = FAIL
           test "$UNSAFE_CODE" = 1
           grep -q 'type="duplicate"' "$JUNIT"
+          test "$LAZY_REFUNDS" = PASS
+          test "$LAZY_ALL" = FAIL
+          test "$LAZY_ALL_CODE" = 1
+          test "$SAFE_ALL" = PASS
+          for f in $LAZY_ALL_JUNIT; do test -f "$f"; done
+          grep -q 'type="lost"' "$GITHUB_WORKSPACE/crashtest-junit-refunds-cut-before-request.xml"
