@@ -2,6 +2,11 @@
 
 **Status: not yet verified.** The files follow each editor's documented `mcp.json` format; nobody has run them against agent-crashtest yet.
 
+> **Safety, for every client.**
+> - **Sandbox only.** The refund tool is a test double writing to a local PostgreSQL. Never connect real payment credentials or a production system.
+> - **The agent gets the refund server only** (`crashtest serve` or `crashtest mcp --stdio`). Never add the test controller (`crashtest controller`) to the agent's configuration.
+> - **Keep `.crashtest-stack.json` private.** It holds the sink's control token. Run `crashtest serve` in a folder the agent's file tools cannot read.
+
 Both connect to the Streamable HTTP server that `crashtest serve` prints (`http://127.0.0.1:PORT/mcp`). The port changes every time `serve` starts, so update the URL after a restart. (Both editors can also launch a stdio command; the `command`/`args` pair from [claude-desktop.md](claude-desktop.md) applies.)
 
 ## VS Code
@@ -19,7 +24,7 @@ Both connect to the Streamable HTTP server that `crashtest serve` prints (`http:
 }
 ```
 
-Start it from the file's code lens or the MCP Servers view; the tool `issue_refund` appears in the chat's tool picker.
+Start it from the file's code lens or the MCP Servers view; the tools `issue_refund` and `check_refund_status` (read-only) appear in the chat's tool picker.
 
 ## Cursor
 

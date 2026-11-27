@@ -4,6 +4,11 @@ The [MCP Inspector](https://github.com/modelcontextprotocol/inspector) is the pr
 
 Start the stack first with `crashtest serve` and note the HTTP URL it prints (see [README.md](README.md)). In the commands below, replace `PORT` and the stack file path with yours.
 
+> **Safety, for every client.**
+> - **Sandbox only.** The refund tool is a test double writing to a local PostgreSQL. Never connect real payment credentials or a production system.
+> - **The agent gets the refund server only** (`crashtest serve` or `crashtest mcp --stdio`). Never add the test controller (`crashtest controller`) to the agent's configuration.
+> - **Keep `.crashtest-stack.json` private.** It holds the sink's control token. Run `crashtest serve` in a folder the agent's file tools cannot read.
+
 ## CLI mode
 
 **Status: verified in CI** (the `inspector` job, Ubuntu, Node 22): the job runs these commands against a `crashtest serve` stack, checks that `tools/list` returns `issue_refund` over both transports, calls the tool once over each, and checks with `crashtest verdict` that each order holds exactly one refund.

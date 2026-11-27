@@ -2,6 +2,11 @@
 
 **Status: verified in CI.** `tests/test_connect_security.py` (the `test-local` job, Ubuntu) and `tests/check_transport_parity.py` (the `clean-install` job, on Ubuntu, Windows and macOS with the package installed from scratch) run an agent built like the code below over both transports, and check that a naive retry gets FAIL (`duplicate`) and a stable idempotency key gets PASS (`correct`), the same over stdio as over HTTP. The SDK version is the one the package pins (`mcp==2.3.0`).
 
+> **Safety, for every client.**
+> - **Sandbox only.** The refund tool is a test double writing to a local PostgreSQL. Never connect real payment credentials or a production system.
+> - **The agent gets the refund server only** (`crashtest serve` or `crashtest mcp --stdio`). Never add the test controller (`crashtest controller`) to the agent's configuration.
+> - **Keep `.crashtest-stack.json` private.** It holds the sink's control token. Run `crashtest serve` in a folder the agent's file tools cannot read.
+
 Start the stack first with `crashtest serve` (see [README.md](README.md)).
 
 ## Streamable HTTP

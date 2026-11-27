@@ -2,6 +2,11 @@
 
 **Status: not yet verified.** The configuration follows Claude Desktop's documented `claude_desktop_config.json` format for stdio servers; nobody has run it against agent-crashtest yet.
 
+> **Safety, for every client.**
+> - **Sandbox only.** The refund tool is a test double writing to a local PostgreSQL. Never connect real payment credentials or a production system.
+> - **The agent gets the refund server only** (`crashtest serve` or `crashtest mcp --stdio`). Never add the test controller (`crashtest controller`) to the agent's configuration.
+> - **Keep `.crashtest-stack.json` private.** It holds the sink's control token. Run `crashtest serve` in a folder the agent's file tools cannot read.
+
 Claude Desktop launches local MCP servers as commands over stdio, so it uses `crashtest mcp --stdio`.
 
 1. Start the stack in a folder of your own: `crashtest serve`. Keep it running.
