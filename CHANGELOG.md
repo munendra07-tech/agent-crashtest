@@ -1,13 +1,16 @@
 # Changelog
 
-## Unreleased
+## 0.3.1 (prepared, not released): the Action runs both scenarios, honest PASS reports, quieter output
 
-From an external tester's report on v0.3.0:
+A patch release. No verdict, checker or contract change, and no change of result or exit code for any run: every trial is still judged from the sink's rows by `crashtest.checker` (the verdict-property tests check every case).
+
+From a maintainer-side test run of v0.3.0 (not counted as an independent tester report):
 - **The Action takes a `scenario` input:** `refunds` (the default, unchanged), `refunds-cut-before-request`, or `all`. With `all` it runs both scenarios one after the other; its `result` is the worst of the two, its `exit-code` the most serious, and `junit-file` lists both reports. CI shows why it matters: a test agent that reports "done" after an error passes `refunds` alone and fails with `all`.
-- **A PASS that never sent an idempotency key says so.** When no request in any trial carried a key, the report's recommended-fix section carries a caveat instead of "nothing to fix". In the refunds scenario: the agent avoided the duplicate some other way (for example a lookup), which can race with a commit in a real system. In the cut scenario: nothing was committed before the retry. The caveat is in all four formats (`caveats` in JSON, a `caveat` property in JUnit). Results and exit codes are unchanged.
+- **A PASS that never sent an idempotency key says so.** When no request in any trial carried a key, the report's recommended-fix section carries a caveat instead of "nothing to fix". In the refunds scenario: the agent avoided the duplicate some other way (for example a lookup), which can race with a commit in a real system. In the cut scenario: nothing was committed before the retry. The caveat is in all four formats (`caveats` in JSON, a `caveat` property in JUnit).
 - **`crashtest selftest`'s passing line no longer says your agent's result "can be trusted".** It now says the harness's counts are reliable on this machine, and that a PASS covers only the scenario.
 - **The connection cut no longer prints a traceback.** In `refunds-cut-before-request` the refund MCP server used to log a full `ClientDisconnect` traceback ("Exception in ASGI application") on every trial, which read like a crash. It now logs one line: the client disconnected before its request was read, and no tool was called. Other errors keep their traceback.
 
+Also:
 - **`crashtest --version`** prints the installed version.
 - **Reports say what ran the test**: the JSON report has `report_schema` (the layout's version; keys are only added within a version) and `environment` (the agent-crashtest, `mcp` and Python versions, the OS, its release and the machine type), and the JUnit report has the same as `env_*` properties. No host name, user name, path or environment variable is recorded. The text and Markdown reports are unchanged.
 - **A stack file left by a killed `crashtest serve` is cleaned up.** `serve` now records its process ID in `.crashtest-stack.json`; when a later command finds that the process is gone, it removes the file and says so on stderr, instead of using URLs that point at nothing.
@@ -15,6 +18,13 @@ From an external tester's report on v0.3.0:
 - Docs: a status lookup before retrying (`check_refund_status`) is no longer presented as equal to an idempotency key; the README, `docs/scenarios.md`, `docs/connect-your-client.md` and the example say it can race in a real system. The README's limitations say what a PASS does and does not show, and that the full suite runs in CI on all three systems.
 - New: a **Tester report** issue form for sharing any result, pass or fail: self-test only or a completed run, both scenarios' results, setup, MCP client or framework, full output, suggestions, and permission to quote.
 - New: `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1), a pull-request template, [docs/testing.md](docs/testing.md), [docs/RELEASING.md](docs/RELEASING.md) and [docs/decisions.md](docs/decisions.md). `CONTRIBUTING.md`'s good first issues are brought up to date.
+- For maintainers: `tools/triage_report.py` reads the issues labelled `tester-report` and prints the tracker, applying the counting rules and checking that the pasted output supports the chosen result. `.github/workflows/reproduce.yml` (started by hand) installs a release on a chosen OS and Python version and runs the self-tests and both example agents. Neither posts, labels or closes anything; see [docs/testing.md](docs/testing.md).
+
+**Compatibility.** Nothing is removed and no default changes. If you parse output:
+- `crashtest selftest`'s passing line has new wording (exit code 0, as before).
+- A PASS report's recommended-fix section can show the caveat where it said "nothing to fix in this scenario" (text and Markdown).
+- The JSON report has a new `caveats` key (a list, empty unless the caveat applies) under the same `report_schema`; keys are only ever added within a schema version.
+- JUnit reports can carry a new `caveat` property.
 
 ## 0.3.0 (25 November 2026): connect over stdio, a control token, a test controller, a second scenario
 
