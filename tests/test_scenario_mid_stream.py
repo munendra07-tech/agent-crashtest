@@ -62,11 +62,18 @@ def _one_attempt(tmp_path, *, progress: bool, after_error: str) -> list[str]:
     return _script(tmp_path, ONE_ATTEMPT.format(progress=arg, after_error=after_error))
 
 
+def _mid_url(stack) -> str:
+    url = stack.mcp_urls.get(scenarios.MID_STREAM_TRANSPORT)
+    if not url:  # the Docker stack serves only the default transport
+        pytest.skip(f"this stack does not serve the {scenarios.MID_STREAM_TRANSPORT} transport")
+    return url
+
+
 def _run(stack, agent_cmd, agent="a", trials=2) -> rr.RunReport:
     return rr.run_refunds(
         agent=agent,
         agent_cmd=agent_cmd,
-        mcp_url=stack.mcp_urls[scenarios.MID_STREAM_TRANSPORT],
+        mcp_url=_mid_url(stack),
         sink_url=stack.sink_url,
         trials=trials,
         client_timeout_s=scenarios.CUT_MID_STREAM.defaults["client_timeout_s"],
@@ -121,6 +128,7 @@ def test_reporting_done_after_the_cut_is_a_lost_refund(stack, tmp_path):
 
 
 def test_crashtest_run_and_selftest(monkeypatch, stack, capsys):
+    _mid_url(stack)
     monkeypatch.setattr(cli, "_start_stack", lambda data_dir, cleanup, *transports: stack)
     code = cli.main(["run", MID, "--agent", "naive", "--trials", "1", "--format", "json"])
     report = json.loads(capsys.readouterr().out)
