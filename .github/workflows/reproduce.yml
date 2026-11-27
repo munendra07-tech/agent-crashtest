@@ -160,7 +160,7 @@ jobs:
               raise SystemExit("a self-test failed on this setup: the harness, not the tester's agent")
           EOF
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: reproduce-${{ matrix.os }}-py${{ inputs.python }}
