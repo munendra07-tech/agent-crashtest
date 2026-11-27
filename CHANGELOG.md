@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.3.1 (prepared, not released): the Action runs both scenarios, honest PASS reports, quieter output
+## 0.3.1 (27 November 2026): the Action runs both scenarios, honest PASS reports, quieter output
 
 A patch release. No verdict, checker or contract change, and no change of result or exit code for any run: every trial is still judged from the sink's rows by `crashtest.checker` (the verdict-property tests check every case).
 

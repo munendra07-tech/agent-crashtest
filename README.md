@@ -19,7 +19,7 @@ A lost response is ordinary: a timeout, a dropped connection, a restarted worker
 Python 3.12 or later; no Docker needed. Install:
 
 ```powershell
-pip install "agent-crashtest[local] @ git+https://github.com/munendra07-tech/agent-crashtest@v0.3.0"
+pip install "agent-crashtest[local] @ git+https://github.com/munendra07-tech/agent-crashtest@v0.3.1"
 ```
 
 Before testing your agent, run `crashtest selftest`. It checks that the harness itself works on your machine, using the two example agents as controls (the unsafe one must FAIL with a duplicate in every trial, the safe one must PASS), and takes about 40 seconds:
@@ -135,14 +135,15 @@ The sink plays the outside world: each row in its `refunds` table is a refund th
 ## In CI: the GitHub Action
 
 ```yaml
-- uses: munendra07-tech/agent-crashtest@v0.3.0
+- uses: munendra07-tech/agent-crashtest@v0.3.1
   with:
     agent: path/to/my_agent.py   # or naive, stable_key
+    scenario: all                # both scenarios; the default is refunds
     trials: 5
     fail-on-duplicate-effect: true
 ```
 
-**Not yet released (on `main`, in the next release): a `scenario` input.** `scenario: all` runs both scenarios, one after the other, and the step's result is the worse of the two. Use it: an agent that reports "done" after an error, without retrying, passes `refunds` alone (the refund had committed) and fails the connection cut (nothing had). `scenario: refunds` stays the default.
+**Run both scenarios** with `scenario: all` (since 0.3.1). It runs both scenarios, one after the other, and the step's result is the worse of the two. Use it: an agent that reports "done" after an error, without retrying, passes `refunds` alone (the refund had committed) and fails the connection cut (nothing had). `scenario: refunds` stays the default.
 
 The Action installs the package with Python 3.12, runs `crashtest run` for the scenario (`refunds` unless you choose another), writes the JUnit report to `crashtest-junit.xml` in the workspace (`crashtest-junit-<scenario>.xml` for the cut) and the Markdown report to the job summary, and fails the step on a duplicate (or lost) refund. With `fail-on-duplicate-effect: false` it reports and passes. Its outputs are `result`, `exit-code` and `junit-file`. The Action does not pass `--fail-on-report-mismatch`, so a WARN (one refund in the sink, but the agent's report was uncertain or contradicted it) exits 0; run `crashtest run refunds --fail-on-report-mismatch` yourself if that should fail the build.
 

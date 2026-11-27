@@ -27,7 +27,7 @@ The verdicts come from the project's checker (`crashtest.checker`), applied to t
 
 ## With the `crashtest` command
 
-Install the project with its local extra (`pip install "agent-crashtest[local] @ git+https://github.com/munendra07-tech/agent-crashtest@v0.3.0"`, or `pip install -e ".[local]"` from a clone), then:
+Install the project with its local extra (`pip install "agent-crashtest[local] @ git+https://github.com/munendra07-tech/agent-crashtest@v0.3.1"`, or `pip install -e ".[local]"` from a clone), then:
 
 | Step | Command | What it does |
 |---|---|---|
