@@ -97,7 +97,7 @@ jobs:
           "$BIN/python" -m pip install --no-cache-dir \
             "agent-crashtest[local] @ git+https://github.com/${GITHUB_REPOSITORY}@${REF}"
           "$BIN/python" --version
-          "$BIN/python" -m pip show agent-crashtest | head -2
+          "$BIN/python" -c "import importlib.metadata as m; print('agent-crashtest', m.version('agent-crashtest'))"
 
       - name: Self-test and both example agents
         working-directory: ${{ runner.temp }}
