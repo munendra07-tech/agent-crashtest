@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for your interest. The project is early, so the most useful contributions are bug reports, reproductions, reports of agents that failed (or passed) `crashtest run refunds`, and new fault scenarios. Issue templates are provided for a bug, a question, and "my agent failed". Everyone taking part follows the [code of conduct](CODE_OF_CONDUCT.md).
+Thanks for your interest. The project is early, so the most useful contributions are bug reports, reproductions, reports of agents that failed (or passed) `crashtest run refunds`, and new fault scenarios. Issue templates are provided for a tester report (any result, pass or fail, including a self-test only), a bug, a question, and "my agent failed". Everyone taking part follows the [code of conduct](CODE_OF_CONDUCT.md).
 
 ## Set up
 

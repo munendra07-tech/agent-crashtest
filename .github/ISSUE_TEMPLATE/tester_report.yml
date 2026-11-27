@@ -1,0 +1,221 @@
+name: Tester report
+description: You ran agent-crashtest, whether only the self-test or against your own agent or client. Pass, warn or fail, every result helps.
+title: "[Tester report] "
+labels: [tester-report]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Thank you for trying agent-crashtest. Reports of **passing** runs are as useful as
+        failing ones. If you only ran `crashtest selftest`, that's useful too: say so below.
+        The [README](https://github.com/munendra07-tech/agent-crashtest#readme) and
+        `crashtest run --help` explain the scenarios and results.
+        **Do not paste secrets, API keys, tokens (including the control token in
+        `.crashtest-stack.json`), customer data or private paths you don't want public.**
+
+  - type: dropdown
+    id: submission
+    attributes:
+      label: What did you run?
+      description: A self-test checks the harness on your machine; a completed run tests your own agent or MCP client.
+      options:
+        - Self-test only (crashtest selftest, with no agent or client of my own)
+        - Completed run with my own agent or MCP client
+    validations:
+      required: true
+
+  - type: dropdown
+    id: relation
+    attributes:
+      label: Your relation to the project
+      options:
+        - Independent tester (not a maintainer or contributor of agent-crashtest)
+        - Maintainer or contributor of agent-crashtest
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: "## Results"
+
+  - type: dropdown
+    id: selftest
+    attributes:
+      label: crashtest selftest
+      options:
+        - Passed
+        - Failed
+        - Not run
+    validations:
+      required: true
+
+  - type: dropdown
+    id: selftest_cut
+    attributes:
+      label: crashtest selftest --scenario refunds-cut-before-request
+      options:
+        - Passed
+        - Failed
+        - Not run
+    validations:
+      required: true
+
+  - type: dropdown
+    id: result_refunds
+    attributes:
+      label: "Your agent or client: refunds (lost response after the commit)"
+      description: The overall result of `crashtest run refunds --agent ...`, or of `crashtest verdict` if you tested by hand.
+      options:
+        - PASS
+        - WARN
+        - FAIL
+        - INCONCLUSIVE
+        - Environment error (exit code 2)
+        - Not run
+    validations:
+      required: true
+
+  - type: dropdown
+    id: result_cut
+    attributes:
+      label: "Your agent or client: refunds-cut-before-request (connection cut before the request)"
+      description: The overall result of `crashtest run refunds-cut-before-request --agent ...`.
+      options:
+        - PASS
+        - WARN
+        - FAIL
+        - INCONCLUSIVE
+        - Environment error (exit code 2)
+        - Not run
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Full output
+      description: >-
+        The complete output of each command you ran (self-test and runs), or the JSON reports
+        (`--format json`). Remove anything secret first.
+      render: text
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: "## Your setup"
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: "e.g. Windows 11, macOS 15 (Apple silicon), Ubuntu 24.04, WSL2"
+    validations:
+      required: true
+
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: "e.g. 3.12.4 (python --version)"
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: agent-crashtest version
+      description: "`crashtest --version`, or `pip show agent-crashtest` on 0.3.0"
+      placeholder: "e.g. 0.3.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: How you installed or ran it
+      options:
+        - pip install from a release tag
+        - From a clone (pip install -e)
+        - Docker Compose
+        - GitHub Action
+        - Other (say below)
+    validations:
+      required: true
+
+  - type: input
+    id: client
+    attributes:
+      label: MCP client or agent framework, with version
+      description: Leave empty for a self-test only.
+      placeholder: "e.g. Pydantic AI 2.68, LangGraph 1.2 + langchain-mcp-adapters 0.3, Claude Desktop 1.4, Cursor 2.1, mcp 2.3.0"
+
+  - type: dropdown
+    id: connection
+    attributes:
+      label: How your agent or client connected
+      multiple: true
+      options:
+        - An agent script run by crashtest run (crashtest run --agent your_script.py)
+        - By hand over Streamable HTTP (crashtest serve, arm, verdict)
+        - By hand over stdio (crashtest mcp --stdio)
+        - Through the test controller (crashtest controller)
+        - Not applicable (self-test only)
+
+  - type: textarea
+    id: retry
+    attributes:
+      label: How your agent handles a timeout or dropped connection
+      description: "For example: retries with no key, retries with one key per order, looks the refund up first, gives up and reports unknown. A short code excerpt helps."
+
+  - type: input
+    id: time
+    attributes:
+      label: Time from install to your first result
+      placeholder: "e.g. 4 minutes"
+
+  - type: markdown
+    attributes:
+      value: "## Your feedback"
+
+  - type: textarea
+    id: confusing
+    attributes:
+      label: Anything that went wrong or was confusing
+      description: Install problems, unclear output, a verdict you disagree with, missing docs.
+
+  - type: textarea
+    id: suggestions
+    attributes:
+      label: Suggestions
+      description: Scenarios, clients, frameworks or report details you'd like to see.
+
+  - type: dropdown
+    id: ci
+    attributes:
+      label: Would you run it in CI?
+      options:
+        - "Yes"
+        - Maybe
+        - "No"
+        - Not sure yet
+
+  - type: dropdown
+    id: quote
+    attributes:
+      label: May the maintainer quote or count your result publicly?
+      description: For example in the README or a post. Nothing is quoted without your permission.
+      options:
+        - Yes, with my GitHub handle
+        - Yes, anonymously
+        - "No"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I removed secrets, tokens, customer data and anything private from the logs.
+          required: true

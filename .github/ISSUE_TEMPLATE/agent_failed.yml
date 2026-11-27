@@ -1,5 +1,5 @@
 name: My agent failed
-description: crashtest run refunds says FAIL, WARN or INCONCLUSIVE and you want help reading why
+description: crashtest run says FAIL, WARN or INCONCLUSIVE and you want help reading why (to share any result, pass or fail, use Tester report)
 labels: [agent-failed, question]
 body:
   - type: markdown
