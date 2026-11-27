@@ -158,12 +158,22 @@ def _idle() -> None:
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
-    from crashtest.experiment.local_stack import local_stack
+    from crashtest.experiment.local_stack import check_fixed_ports, local_stack
 
     data_dir = Path(args.data_dir).resolve()
+    try:
+        check_fixed_ports(args.sink_port, args.mcp_port)
+    except RuntimeError as exc:
+        print(f"crashtest: {exc}", file=sys.stderr)
+        return 2
     print(f"Starting PostgreSQL ({data_dir}), the sink and the MCP server...", flush=True)
     # The mid-stream cut's server too, so the test controller can run that scenario.
-    with local_stack(data_dir, transports=(scenarios.MID_STREAM_TRANSPORT,)) as stack:
+    with local_stack(
+        data_dir,
+        transports=(scenarios.MID_STREAM_TRANSPORT,),
+        sink_port=args.sink_port,
+        mcp_port=args.mcp_port,
+    ) as stack:
         _write_state(stack)
         print(
             f"\nMCP server (streamable HTTP): {stack.mcp_url}\n"
@@ -171,7 +181,10 @@ def cmd_serve(args: argparse.Namespace) -> int:
             f"{STATE_FILE.resolve()}\n"
             f"Sink:                         {stack.sink_url}\n"
             f"Control token:                in {STATE_FILE} (the sink requires it on "
-            "/control/*; do not give it to the agent)\n\n"
+            "/control/*; do not give it to the agent)\n"
+            "Test controller (for you, never for the agent):\n"
+            f"                              crashtest controller --stdio --stack-file "
+            f"{STATE_FILE.resolve()}\n\n"
             "Point your MCP client at the MCP server; its tools are issue_refund and the\n"
             "read-only check_refund_status.\n"
             "In another terminal, in this folder:\n"
@@ -524,6 +537,15 @@ def build_parser() -> argparse.ArgumentParser:
     serve = sub.add_parser("serve", help="start the sink and the MCP server on this machine")
     serve.add_argument(
         "--data-dir", default=".crashtest-pgdata", help="where PostgreSQL keeps its data"
+    )
+    serve.add_argument(
+        "--mcp-port",
+        type=int,
+        help="a fixed port for the MCP server's HTTP URL, so an HTTP client's configuration "
+        "survives a restart (default: a free port each time)",
+    )
+    serve.add_argument(
+        "--sink-port", type=int, help="a fixed port for the sink (default: a free port)"
     )
     serve.set_defaults(func=cmd_serve)
 

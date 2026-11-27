@@ -21,11 +21,11 @@ Copy-ready setup for connecting an MCP client to agent-crashtest's simulated ref
    crashtest serve
    ```
 
-   It prints the MCP server's HTTP URL (a free port, different each time) and the stdio command, and writes both, with the sink's control token, to `.crashtest-stack.json` in that folder. It runs until Ctrl+C.
+   It prints the MCP server's HTTP URL (a free port, different each time, unless you fix it with `crashtest serve --mcp-port 8102`), the stdio command and the test controller's command (for you, never for the agent), and writes both, with the sink's control token, to `.crashtest-stack.json` in that folder. It runs until Ctrl+C.
 
 2. **Pick a transport.**
    - **stdio**: the client launches `crashtest mcp --stdio --stack-file <absolute path to .crashtest-stack.json>`. That process serves the tool and forwards each call to the running sink. Because it reads the stack file when it starts, a client that launches it fresh follows a restarted `crashtest serve` automatically; a client that keeps it running must restart it after `serve` restarts.
-   - **Streamable HTTP**: the client connects to the printed URL, `http://127.0.0.1:<port>/mcp`. The port changes every time `serve` starts, so update the client's configuration after a restart.
+   - **Streamable HTTP**: the client connects to the printed URL, `http://127.0.0.1:<port>/mcp`. The port changes every time `serve` starts, unless you start it with `--mcp-port`: `crashtest serve --mcp-port 8102` serves `http://127.0.0.1:8102/mcp` every time, so the client's configuration survives a restart. A port already in use is refused before anything starts.
 
 3. **Run a test** from another terminal in the same folder: `crashtest arm ORDER_ID --delay 5`, have your client call `issue_refund` for that order with a timeout under 5 seconds, then `crashtest verdict ORDER_ID --report done|unknown|not_done|none`. See [../connect-your-client.md](../connect-your-client.md).
 

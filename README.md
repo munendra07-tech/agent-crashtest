@@ -179,7 +179,7 @@ The tool's arguments, the idempotency key and the same steps with `curl` and Pyt
 
 ## Connect an MCP client
 
-Three steps: start the stack with `crashtest serve`, add the refund server to your client, then use `crashtest arm` and `crashtest verdict` as in the step-by-step section above.
+Three steps: start the stack with `crashtest serve`, add the refund server to your client, then use `crashtest arm` and `crashtest verdict` as in the step-by-step section above. For an HTTP client, `crashtest serve --mcp-port 8102` keeps the URL at `http://127.0.0.1:8102/mcp` across restarts (on `main`, in the next release).
 
 | Client | How it connects | Status |
 |---|---|---|
@@ -221,7 +221,7 @@ The tool sends a progress notification, then the proxy cuts the connection befor
 
 ## Limitations
 
-- **Client guides.** Only the Python `mcp` client (stdio and HTTP) and the MCP Inspector's CLI are verified in CI; the Claude Desktop, Claude Code, VS Code, Cursor and Inspector web-UI steps follow those clients' documentation and have not been run yet ([docs/clients/](docs/clients/README.md)). `crashtest serve` picks a free port each time, so an HTTP client's configuration must be updated after a restart.
+- **Client guides.** Only the Python `mcp` client (stdio and HTTP) and the MCP Inspector's CLI are verified in CI; the Claude Desktop, Claude Code, VS Code, Cursor and Inspector web-UI steps follow those clients' documentation and have not been run yet ([docs/clients/](docs/clients/README.md)). `crashtest serve` picks a free port each time unless you fix one with `--mcp-port` (since the next release); otherwise an HTTP client's configuration must be updated after a restart.
 - **Three scenarios.** A refund through one MCP tool, with one of three faults: the first response is lost after the refund commits (`refunds`, the reference), the connection is cut before the request reaches the server (`refunds-cut-before-request`), or it is cut mid-stream, before the commit (`refunds-cut-mid-stream`, one server configuration); both cuts are from experiment 008. Cuts during the effect, crashes of the agent's own process and other effects (bookings, inventory) are not in `crashtest run` yet. See [docs/scenarios.md](docs/scenarios.md) for each scenario's ground truth and limitations.
 - **What a PASS shows.** One correct refund per order in the sink, and the agent said `done`. It does not show that the agent received a success or reasoned correctly: the harness sees only the sink and the agent's final report. An agent that says `done` after an error passes `refunds` (the refund landed anyway) and fails `refunds-cut-before-request` (`lost`), so run both.
 - **The agent runs as a script**, once per order, with the arguments above. An agent that needs a model, credentials or a long-running process has to be wrapped in such a script.

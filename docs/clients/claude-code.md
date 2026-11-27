@@ -23,7 +23,7 @@ Everything after `--` is the command Claude Code launches. If `crashtest` is not
 claude mcp add --transport http crashtest-refunds http://127.0.0.1:PORT/mcp
 ```
 
-Use the URL `crashtest serve` printed. The port changes each time `serve` starts; then remove and add the server again (`claude mcp remove crashtest-refunds`).
+Use the URL `crashtest serve` printed. The port changes each time `serve` starts, unless you start it with a fixed one (`crashtest serve --mcp-port 8102`, then `http://127.0.0.1:8102/mcp`). Otherwise remove and add the server again after a restart (`claude mcp remove crashtest-refunds`).
 
 ## Check and use it
 

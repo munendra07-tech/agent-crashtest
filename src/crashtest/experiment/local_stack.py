@@ -90,6 +90,34 @@ def _free_port() -> int:
             return port
 
 
+def check_fixed_ports(sink_port: int | None, mcp_port: int | None) -> None:
+    """Reject a fixed port that is invalid, repeated or already taken, before anything starts.
+
+    A RuntimeError names the port and what to do; `crashtest serve` reports it as an
+    environment error (exit code 2).
+    """
+    given = {
+        name: port
+        for name, port in (("--sink-port", sink_port), ("--mcp-port", mcp_port))
+        if port is not None
+    }
+    for name, port in given.items():
+        if not 1 <= port <= 65535:
+            raise RuntimeError(f"{name} {port} is not a port number (1 to 65535)")
+    if len(set(given.values())) < len(given):
+        raise RuntimeError("--sink-port and --mcp-port must be different ports")
+    for name, port in given.items():
+        with socket.socket() as s:
+            try:
+                s.bind(("127.0.0.1", port))
+            except OSError as exc:
+                raise RuntimeError(
+                    f"{name} {port}: the port is not free on 127.0.0.1 ({exc.strerror or exc}); "
+                    f"stop what uses it, choose another port, or leave {name} out for a free one"
+                ) from exc
+        _ISSUED_PORTS.add(port)  # so _free_port never hands it to another server
+
+
 def _wait_for_http(url: str, timeout_s: float = 30.0) -> None:
     deadline = time.monotonic() + timeout_s
     last_error: Exception | None = None
@@ -118,21 +146,30 @@ def _wait_for_port(port: int, timeout_s: float = 30.0) -> None:
 def local_stack(
     pgdata: str | os.PathLike[str] | None = None,
     transports: Iterable[str] = (DEFAULT_TRANSPORT,),
+    *,
+    sink_port: int | None = None,
+    mcp_port: int | None = None,
 ) -> Iterator[Stack]:
-    """Start PostgreSQL, the sink, and one MCP server per requested transport."""
+    """Start PostgreSQL, the sink, and one MCP server per requested transport.
+
+    `sink_port` and `mcp_port` fix the sink's port and the default transport's MCP
+    server port (the URL an HTTP client is configured with); every other server gets a
+    free port. Fixed ports are checked before anything starts.
+    """
     import pgserver  # imported here so the Docker path does not need it
 
     names = list(dict.fromkeys([DEFAULT_TRANSPORT, *transports]))
     unknown = [n for n in names if n not in SERVED_TRANSPORTS]
     if unknown:
         raise ValueError(f"unknown transports: {unknown}")
+    check_fixed_ports(sink_port, mcp_port)
 
     pgdata_path = Path(pgdata or os.environ.get("CRASHTEST_PGDATA", ".pgdata")).resolve()
     pgdata_path.mkdir(parents=True, exist_ok=True)
     pg = pgserver.get_server(str(pgdata_path), cleanup_mode="stop")
     database_url = pg.get_uri()
 
-    sink_port = _free_port()
+    sink_port = sink_port or _free_port()
     sink_url = f"http://127.0.0.1:{sink_port}"
     token = control_token.new_token()
     # The MCP servers get no token: they only call POST /refunds.
@@ -160,7 +197,7 @@ def local_stack(
         mcp_ports: dict[str, int] = {}
         for name in names:
             stateless, json_response = SERVED_TRANSPORTS[name]
-            mcp_ports[name] = _free_port()
+            mcp_ports[name] = mcp_port if (name == DEFAULT_TRANSPORT and mcp_port) else _free_port()
             procs.append(
                 subprocess.Popen(
                     [sys.executable, "-m", "crashtest.refund_mcp.server"],

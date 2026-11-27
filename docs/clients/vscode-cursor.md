@@ -7,7 +7,7 @@
 > - **The agent gets the refund server only** (`crashtest serve` or `crashtest mcp --stdio`). Never add the test controller (`crashtest controller`) to the agent's configuration.
 > - **Keep `.crashtest-stack.json` private.** It holds the sink's control token. Run `crashtest serve` in a folder the agent's file tools cannot read.
 
-Both connect to the Streamable HTTP server that `crashtest serve` prints (`http://127.0.0.1:PORT/mcp`). The port changes every time `serve` starts, so update the URL after a restart. (Both editors can also launch a stdio command; the `command`/`args` pair from [claude-desktop.md](claude-desktop.md) applies.)
+Both connect to the Streamable HTTP server that `crashtest serve` prints (`http://127.0.0.1:PORT/mcp`). The port changes every time `serve` starts, so start it with a fixed port, `crashtest serve --mcp-port 8102`, and use `http://127.0.0.1:8102/mcp` below; then the configuration survives a restart. (Both editors can also launch a stdio command; the `command`/`args` pair from [claude-desktop.md](claude-desktop.md) applies.)
 
 ## VS Code
 

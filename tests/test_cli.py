@@ -96,7 +96,7 @@ def test_verdict_reports_an_unreachable_sink(capsys):
     assert "cannot reach the sink" in capsys.readouterr().err
 
 
-def test_serve_starts_the_stack_and_writes_its_urls(tmp_path, monkeypatch):
+def test_serve_starts_the_stack_and_writes_its_urls(tmp_path, monkeypatch, capsys):
     pytest.importorskip("pgserver")
     monkeypatch.chdir(tmp_path)
     seen: dict = {}
@@ -112,6 +112,10 @@ def test_serve_starts_the_stack_and_writes_its_urls(tmp_path, monkeypatch):
 
     monkeypatch.setattr(cli, "_idle", stop_after_checking)
     assert cli.main(["serve", "--data-dir", str(tmp_path / "pg")]) == 0
+    out = capsys.readouterr().out
+    # the controller is offered to the developer, labelled, beside the agent's server
+    assert "Test controller (for you, never for the agent):" in out
+    assert "crashtest controller --stdio --stack-file" in out
 
     assert seen["health"] == 200
     assert seen["mcp_url"].endswith("/mcp")
@@ -161,3 +165,71 @@ def test_a_stack_file_of_a_running_serve_is_kept(tmp_path, monkeypatch):
     assert cli._pid_alive(os.getpid())
     assert cli._sink_url(None) == "http://s:1"
     assert (tmp_path / cli.STATE_FILE).exists()
+
+
+def _two_free_ports() -> tuple[int, int]:
+    import socket
+
+    with socket.socket() as a, socket.socket() as b:
+        a.bind(("127.0.0.1", 0))
+        b.bind(("127.0.0.1", 0))
+        return a.getsockname()[1], b.getsockname()[1]
+
+
+def test_serve_with_fixed_ports_uses_them(tmp_path, monkeypatch):
+    """--mcp-port and --sink-port: the HTTP URL stays the same across restarts."""
+    pytest.importorskip("pgserver")
+    monkeypatch.chdir(tmp_path)
+    mcp_port, sink_port = _two_free_ports()
+    seen: dict = {}
+
+    def stop_after_checking() -> None:
+        seen.update(json.loads(Path(cli.STATE_FILE).read_text(encoding="utf-8")))
+        seen["health"] = httpx.get(f"{seen['sink_url']}/health", timeout=10).status_code
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "_idle", stop_after_checking)
+    argv = ["serve", "--data-dir", str(tmp_path / "pg"), "--mcp-port", str(mcp_port)]
+    assert cli.main([*argv, "--sink-port", str(sink_port)]) == 0
+    assert seen["mcp_url"] == f"http://127.0.0.1:{mcp_port}/mcp"
+    assert seen["sink_url"] == f"http://127.0.0.1:{sink_port}"
+    assert seen["health"] == 200
+    # the other servers (the mid-stream cut's) still get free ports of their own
+    assert all(u.endswith("/mcp") for u in seen["mcp_urls"].values())
+    assert len(set(seen["mcp_urls"].values())) == len(seen["mcp_urls"])
+
+
+def test_serve_refuses_a_port_in_use_before_starting_anything(tmp_path, monkeypatch, capsys):
+    import socket
+
+    monkeypatch.chdir(tmp_path)
+    with socket.socket() as busy:
+        busy.bind(("127.0.0.1", 0))
+        busy.listen()
+        port = busy.getsockname()[1]
+        code = cli.main(["serve", "--data-dir", str(tmp_path / "pg"), "--mcp-port", str(port)])
+    err = capsys.readouterr().err
+    assert code == 2
+    assert f"--mcp-port {port}: the port is not free" in err
+    assert not (tmp_path / "pg").exists()  # PostgreSQL was never started
+
+
+@pytest.mark.parametrize(
+    "extra, message",
+    [
+        (["--mcp-port", "0"], "--mcp-port 0 is not a port number"),
+        (["--sink-port", "70000"], "--sink-port 70000 is not a port number"),
+        (["--mcp-port", "PORT", "--sink-port", "PORT"], "must be different ports"),
+    ],
+)
+def test_serve_rejects_bad_port_options(extra, message, tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    port = str(_two_free_ports()[0])
+    argv = [
+        "serve",
+        "--data-dir",
+        str(tmp_path / "pg"),
+        *(port if a == "PORT" else a for a in extra),
+    ]
+    assert cli.main(argv) == 2
+    assert message in capsys.readouterr().err

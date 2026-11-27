@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **`crashtest serve --mcp-port N` and `--sink-port N`** fix the MCP server's HTTP port and the sink's port, so an HTTP client's configuration (VS Code, Cursor, Claude Code over HTTP) survives a restart. Without them, ports are free ones, as before. A port that is in use, out of range, or given for both is refused before anything starts (exit code 2, with the reason).
+- **`crashtest serve` prints the test controller's command** beside the agent-facing server, labelled "for you, never for the agent".
 - **A third scenario, `refunds-cut-mid-stream`** (experiment 008's `mid_stream` cut): the tool sends a progress notification and pauses; a proxy lets the notification through and cuts before the response; the server (stateful SSE, no event store, stated in the scenario) cancels the tool, so nothing is refunded. `crashtest run refunds-cut-mid-stream` and `crashtest selftest --scenario refunds-cut-mid-stream` (both example agents must PASS with the cut confirmed). The agent's client must ask for progress, or the trial is INCONCLUSIVE with that fix in the report. Its default agent timeout is 10 s. No verdict or checker change.
 - **The test controller runs `refunds-cut-mid-stream`.** `crashtest serve` now also starts the mid-stream MCP server and lists every server's URL under `mcp_urls` in `.crashtest-stack.json` (`mcp_url` is unchanged). With a stack file from an older `serve`, `create_test_run` says to restart it.
 - **The Action takes `scenario: refunds-cut-mid-stream`.** `scenario: all` is unchanged (refunds and the cut before the request), so existing builds do not change.
