@@ -57,7 +57,7 @@ jobs:
         run: >-
           pytest "$GITHUB_WORKSPACE/tests" -c "$GITHUB_WORKSPACE/pyproject.toml"
           --rootdir "$GITHUB_WORKSPACE" --basetemp "$RUNNER_TEMP/pytest" -p no:cacheprovider
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: matrix.os == 'ubuntu-latest'
         with:
           name: coverage
