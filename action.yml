@@ -20,8 +20,11 @@ inputs:
   scenario:
     description: >-
       refunds (a lost response after the commit, the default),
-      refunds-cut-before-request (the connection cut before the request), or all (both,
-      one after the other; the result is the worst of the two). Use all: an agent that
+      refunds-cut-before-request (the connection cut before the request),
+      refunds-cut-mid-stream (cut after a progress notification, before the commit; the
+      agent's MCP client must ask for progress), or all (refunds and
+      refunds-cut-before-request, one after the other; the result is the worst of the two;
+      not the mid-stream cut, so existing builds do not change). Use all: an agent that
       reports "done" after an error without retrying passes refunds alone, and fails the cut.
     required: false
     default: refunds
@@ -78,9 +81,9 @@ runs:
         FAIL_ON_DUPLICATE: ${{ inputs.fail-on-duplicate-effect }}
       run: |
         case "$SCENARIO" in
-          refunds|refunds-cut-before-request) scenarios="$SCENARIO" ;;
+          refunds|refunds-cut-before-request|refunds-cut-mid-stream) scenarios="$SCENARIO" ;;
           all) scenarios="refunds refunds-cut-before-request" ;;
-          *) echo "::error title=agent-crashtest::unknown scenario '${SCENARIO}' (refunds, refunds-cut-before-request or all)"; exit 2 ;;
+          *) echo "::error title=agent-crashtest::unknown scenario '${SCENARIO}' (refunds, refunds-cut-before-request, refunds-cut-mid-stream or all)"; exit 2 ;;
         esac
         junits=""; codes=""; results=""
         for s in $scenarios; do

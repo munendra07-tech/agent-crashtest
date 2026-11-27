@@ -28,7 +28,7 @@ crashtest selftest --scenario refunds-cut-before-request
 crashtest run refunds-cut-mid-stream --agent naive
 ```
 
-The test controller ([controller.md](controller.md)) runs `refunds` and `refunds-cut-before-request` (not yet `refunds-cut-mid-stream`, whose fault needs an MCP server `crashtest serve` does not start; it says so and points to `crashtest run`): `create_test_run` takes `scenario`, and its result gives the URL the agent must use (for the cut, the proxy's).
+The test controller ([controller.md](controller.md)) runs all three (for `refunds-cut-mid-stream`, on the second MCP server that `crashtest serve` starts for it): `create_test_run` takes `scenario`, and its result gives the URL the agent must use (for the cut, the proxy's).
 
 ## `refunds`: lost response after the commit
 
@@ -84,7 +84,7 @@ What the agent sees: its call starts, a progress notification arrives, then the 
 - The proxy aborts both sides at once, so the server learns of the cut at once; a silent drop could let the effect commit.
 - A cut while the tool's sink request is in flight, or after the commit but before the tool returns, is not this scenario.
 - Measured in experiment 008 with the reference `mcp` client and server 2.3.0; this scenario runs the same server, checked by its regression tests and selftest, not by a new run of record.
-- Not in the test controller yet, and not in the GitHub Action's `scenario` input.
+- In the GitHub Action it runs only as `scenario: refunds-cut-mid-stream`, not as part of `scenario: all`.
 - Repeatability under the stated timeout, not a rate.
 
 ## Considered and not added: a slow response

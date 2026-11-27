@@ -66,4 +66,5 @@ Status: the Inspector commands above are **not yet verified**. The controller it
 
 - Runs live in the controller's memory: restarting it forgets them (the sink keeps every row).
 - The controller does not run your agent. You run it, on the order ID it gives you, and say what it reported; `crashtest run` is the way to have the harness run an agent script itself.
-- Two scenarios: `refunds` (version 1) and `refunds-cut-before-request` (version 1); `create_test_run` lists them, and for the cut its `agent_mcp_url` is the proxy's, which the controller keeps running while it runs. See [scenarios.md](scenarios.md).
+- Three scenarios: `refunds`, `refunds-cut-before-request` and `refunds-cut-mid-stream` (each version 1); `create_test_run` lists them, and for a cut its `agent_mcp_url` is the proxy's, which the controller keeps running while it runs. See [scenarios.md](scenarios.md).
+- `refunds-cut-mid-stream` needs the mid-stream MCP server (stateful SSE, no event store) that `crashtest serve` starts since this version and lists under `mcp_urls` in `.crashtest-stack.json`. With a stack file from an older `serve`, `create_test_run` says to restart it. Run the agent with a timeout above 3 s (the scenario's default is 10 s), and make its client ask for progress.

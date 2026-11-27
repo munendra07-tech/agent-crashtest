@@ -55,7 +55,7 @@ class Scenario:
     source: str  # where the scenario comes from
     controller: bool = True
     # The MCP server the scenario's fault needs (a transport of the local stack).
-    transport: str = "stateless_json"
+    transport: str = "stateless_json"  # DEFAULT_TRANSPORT
     # The proxy's cut point, for a fault held by a DropProxy; None: the sink holds it.
     drop_point: str | None = None
     # The shortest wait, from the agent's start, before the sink is read for the verdict.
@@ -108,6 +108,8 @@ def _cut_mid_stream(s: dict[str, Any]) -> str:
 # store, and a tool that reports progress and then pauses this long before it calls
 # the sink (crashtest.experiment.local_stack.PROGRESS_DELAY_S).
 MID_STREAM_TRANSPORT = "stateful_sse_progress"
+# The default MCP server (crashtest.experiment.local_stack.DEFAULT_TRANSPORT).
+DEFAULT_TRANSPORT = "stateless_json"
 MID_STREAM_PAUSE_S = 3.0
 
 
@@ -220,7 +222,6 @@ CUT_MID_STREAM = Scenario(
         "Repeatability under the stated timeout, not a rate.",
     ),
     source="experiment 008 (docs/experiments/008-mcp-cut-points.md), the mid_stream cut",
-    controller=False,
     transport=MID_STREAM_TRANSPORT,
     drop_point="mid_stream",
     # If the server did not cancel the cut call, it would commit 3 s after the call

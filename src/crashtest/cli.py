@@ -143,6 +143,7 @@ def _write_state(stack: Stack) -> None:
             {
                 "sink_url": stack.sink_url,
                 "mcp_url": stack.mcp_url,
+                "mcp_urls": stack.mcp_urls,
                 "control_token": stack.control_token,
                 "pid": os.getpid(),
             },
@@ -161,7 +162,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
     data_dir = Path(args.data_dir).resolve()
     print(f"Starting PostgreSQL ({data_dir}), the sink and the MCP server...", flush=True)
-    with local_stack(data_dir) as stack:
+    # The mid-stream cut's server too, so the test controller can run that scenario.
+    with local_stack(data_dir, transports=(scenarios.MID_STREAM_TRANSPORT,)) as stack:
         _write_state(stack)
         print(
             f"\nMCP server (streamable HTTP): {stack.mcp_url}\n"
@@ -323,7 +325,10 @@ def cmd_controller(args: argparse.Namespace) -> int:
     token = control_token.token_for(sink) or state.get("control_token")
     try:
         controller = Controller(
-            sink_url=sink, mcp_url=args.mcp_url or state.get("mcp_url", ""), token=token
+            sink_url=sink,
+            mcp_url=args.mcp_url or state.get("mcp_url", ""),
+            token=token,
+            mcp_urls={} if args.mcp_url else state.get("mcp_urls") or {},
         )
         httpx.get(f"{sink}/health", timeout=5.0).raise_for_status()
     except ControllerError as exc:

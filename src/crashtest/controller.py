@@ -72,7 +72,14 @@ class ControllerRun:
 class Controller:
     """The controller's logic, kept apart from MCP so it can be tested directly."""
 
-    def __init__(self, *, sink_url: str, mcp_url: str, token: str | None) -> None:
+    def __init__(
+        self,
+        *,
+        sink_url: str,
+        mcp_url: str,
+        token: str | None,
+        mcp_urls: dict[str, str] | None = None,
+    ) -> None:
         if not token:
             raise ControllerError(
                 "the controller needs the sink's control token: run it in the folder where "
@@ -80,6 +87,9 @@ class Controller:
             )
         self.sink_url = sink_url.rstrip("/")
         self.mcp_url = mcp_url
+        # The MCP server per transport (from `crashtest serve`'s stack file); the
+        # default one is mcp_url.
+        self.mcp_urls = {**(mcp_urls or {}), scenarios.DEFAULT_TRANSPORT: mcp_url}
         self.token = token
         self.runs: dict[str, ControllerRun] = {}
         # A scenario whose fault is not held by the sink (the cut: a proxy in front of
@@ -89,9 +99,22 @@ class Controller:
     def faults(self, scenario: scenarios.Scenario) -> scenarios.Faults:
         if scenario.name not in self._faults:
             self._faults[scenario.name] = scenarios.Faults(
-                scenario, mcp_url=self.mcp_url, sink_url=self.sink_url, token=self.token
+                scenario,
+                mcp_url=self._server_url(scenario),
+                sink_url=self.sink_url,
+                token=self.token,
             ).__enter__()
         return self._faults[scenario.name]
+
+    def _server_url(self, scenario: scenarios.Scenario) -> str:
+        url = self.mcp_urls.get(scenario.transport)
+        if not url:
+            raise ControllerError(
+                f"the {scenario.name} scenario needs the {scenario.transport} MCP server, "
+                "which the running `crashtest serve` does not report: restart it with this "
+                f"version, or use `crashtest run {scenario.name}`"
+            )
+        return url
 
     def close(self) -> None:
         for faults in self._faults.values():
@@ -133,6 +156,7 @@ class Controller:
             )
         if not 1 <= trials <= 100:
             raise ControllerError("trials must be 1 to 100")
+        self._server_url(found)
         run = ControllerRun(
             run_id=f"run-{uuid.uuid4()}",
             scenario=found,

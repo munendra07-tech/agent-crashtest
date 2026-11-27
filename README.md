@@ -143,7 +143,7 @@ The sink plays the outside world: each row in its `refunds` table is a refund th
     fail-on-duplicate-effect: true
 ```
 
-**Run both scenarios** with `scenario: all` (since 0.3.1). It runs both scenarios, one after the other, and the step's result is the worse of the two. Use it: an agent that reports "done" after an error, without retrying, passes `refunds` alone (the refund had committed) and fails the connection cut (nothing had). `scenario: refunds` stays the default.
+**Run both scenarios** with `scenario: all` (since 0.3.1). It runs both scenarios, one after the other, and the step's result is the worse of the two. Use it: an agent that reports "done" after an error, without retrying, passes `refunds` alone (the refund had committed) and fails the connection cut (nothing had). `scenario: refunds` stays the default. `scenario: refunds-cut-mid-stream` runs the third scenario on its own; it is not in `all`, because it needs an MCP client that asks for progress, and adding it would change existing builds.
 
 The Action installs the package with Python 3.12, runs `crashtest run` for the scenario (`refunds` unless you choose another), writes the JUnit report to `crashtest-junit.xml` in the workspace (`crashtest-junit-<scenario>.xml` for the cut) and the Markdown report to the job summary, and fails the step on a duplicate (or lost) refund. With `fail-on-duplicate-effect: false` it reports and passes. Its outputs are `result`, `exit-code` and `junit-file`. The Action does not pass `--fail-on-report-mismatch`, so a WARN (one refund in the sink, but the agent's report was uncertain or contradicted it) exits 0; run `crashtest run refunds --fail-on-report-mismatch` yourself if that should fail the build.
 
@@ -197,7 +197,7 @@ A proxy between your agent and the MCP server cuts the agent's first call before
 crashtest run refunds-cut-mid-stream --agent naive
 ```
 
-The tool sends a progress notification, then the proxy cuts the connection before the response, while the tool is still paused before the refund; the server cancels the tool, so nothing is refunded and a retry refunds once. Seeing the call start is not evidence that it finished. Your agent's MCP client must ask for progress (`progress_callback` with the Python client), or the trial is INCONCLUSIVE. One stated server configuration (stateful SSE, no event store), from experiment 008; not yet in the test controller or the Action. Details: [docs/scenarios.md](docs/scenarios.md).
+The tool sends a progress notification, then the proxy cuts the connection before the response, while the tool is still paused before the refund; the server cancels the tool, so nothing is refunded and a retry refunds once. Seeing the call start is not evidence that it finished. Your agent's MCP client must ask for progress (`progress_callback` with the Python client), or the trial is INCONCLUSIVE. One stated server configuration (stateful SSE, no event store), from experiment 008. The test controller runs it too, and the Action takes `scenario: refunds-cut-mid-stream` (not part of `scenario: all`). Details: [docs/scenarios.md](docs/scenarios.md).
 
 ### Drive tests from your own MCP client: the test controller
 

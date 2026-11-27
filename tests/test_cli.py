@@ -115,6 +115,9 @@ def test_serve_starts_the_stack_and_writes_its_urls(tmp_path, monkeypatch):
 
     assert seen["health"] == 200
     assert seen["mcp_url"].endswith("/mcp")
+    # The mid-stream cut's server, for the test controller.
+    assert seen["mcp_urls"]["stateful_sse_progress"].endswith("/mcp")
+    assert seen["mcp_urls"]["stateless_json"] == seen["mcp_url"]
     assert len(seen["control_token"]) >= 32  # stored for the CLI, required by the sink
     assert seen["anonymous_reset"] == 401
     assert not (tmp_path / cli.STATE_FILE).exists()  # removed on the way out

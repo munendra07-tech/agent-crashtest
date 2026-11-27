@@ -151,6 +151,9 @@ jobs:
       - name: Selftest of the cut-before-request scenario
         working-directory: ${{ runner.temp }}
         run: '"$BIN/crashtest" selftest --scenario refunds-cut-before-request'
+      - name: Selftest of the cut-mid-stream scenario
+        working-directory: ${{ runner.temp }}
+        run: '"$BIN/crashtest" selftest --scenario refunds-cut-mid-stream'
       - name: The test controller over stdio drives a run
         working-directory: ${{ runner.temp }}
         run: '"$BIN/python" "$GITHUB_WORKSPACE/tests/check_controller.py" controller-pgdata'
@@ -271,12 +274,20 @@ jobs:
           agent: stable_key
           trials: "2"
           scenario: all
+      - name: The naive agent passes the mid-stream cut (the server cancelled the cut call)
+        id: naive_mid
+        uses: ./
+        with:
+          agent: naive
+          trials: "2"
+          scenario: refunds-cut-mid-stream
       - name: Check the outputs
         env:
           LAZY_REFUNDS: ${{ steps.lazy_refunds.outputs.result }}
           LAZY_ALL: ${{ steps.lazy_all.outputs.result }}
           LAZY_ALL_CODE: ${{ steps.lazy_all.outputs.exit-code }}
           SAFE_ALL: ${{ steps.safe_all.outputs.result }}
+          NAIVE_MID: ${{ steps.naive_mid.outputs.result }}
           SAFE: ${{ steps.safe.outputs.result }}
           UNSAFE: ${{ steps.unsafe.outputs.result }}
           UNSAFE_CODE: ${{ steps.unsafe.outputs.exit-code }}
@@ -288,3 +299,4 @@ jobs:
           test "$LAZY_ALL" = FAIL
           test "$LAZY_ALL_CODE" = 1
           test "$SAFE_ALL" = PASS
+          test "$NAIVE_MID" = PASS

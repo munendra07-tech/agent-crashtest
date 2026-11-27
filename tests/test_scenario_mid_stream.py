@@ -90,7 +90,7 @@ def test_the_scenario_is_registered():
     assert s.controls == {"naive": "PASS", "stable_key": "PASS"}
     assert s.defaults["client_timeout_s"] > scenarios.MID_STREAM_PAUSE_S
     assert s.min_settle_s > scenarios.MID_STREAM_PAUSE_S
-    assert s.controller is False
+    assert s.controller is True
 
 
 MID_T = scenarios.MID_STREAM_TRANSPORT
@@ -138,9 +138,55 @@ def test_crashtest_run_and_selftest(monkeypatch, stack, capsys):
     assert "selftest passed (refunds-cut-mid-stream)" in capsys.readouterr().out
 
 
-def test_the_controller_points_to_crashtest_run(stack):
+def test_a_controller_without_the_mid_stream_server_says_what_to_do(stack):
+    # An older `crashtest serve` wrote no mcp_urls in its stack file.
     controller = Controller(
         sink_url=stack.sink_url, mcp_url=stack.mcp_url, token=stack.control_token
     )
-    with pytest.raises(ControllerError, match="crashtest run refunds-cut-mid-stream"):
+    with pytest.raises(ControllerError, match="restart it with this version"):
         controller.create_run(scenario=MID)
+
+
+async def test_the_controller_runs_the_mid_stream_cut(stack):
+    import asyncio
+    import subprocess
+
+    from mcp import Client
+
+    from crashtest import control_token
+    from crashtest.controller import build_server
+
+    controller = Controller(
+        sink_url=stack.sink_url,
+        mcp_url=stack.mcp_url,
+        token=stack.control_token,
+        mcp_urls={MID_T: _mid_url(stack)},
+    )
+
+    def agent(url: str, order_id: str) -> str:
+        done = subprocess.run(
+            [*_agent("naive"), "--mcp-url", url, "--order-id", order_id, "--amount-cents",
+             "2500", "--timeout", "10"],
+            capture_output=True, text=True, timeout=120, env=control_token.agent_env(),
+        )  # fmt: skip
+        return rr._client_report(done.stdout)
+
+    try:
+        async with Client(build_server(controller)) as dev:
+            created = (await dev.call_tool("create_test_run", {"scenario": MID})).structured_content
+            assert MID in {s["name"] for s in created["scenarios"]}
+            assert created["agent_mcp_url"] != _mid_url(stack)  # the proxy's
+            run_id, order_id = created["run_id"], created["trials"][0]["order_id"]
+            await dev.call_tool("arm_fault", {"run_id": run_id, "trial": 1})
+            said = await asyncio.to_thread(agent, created["agent_mcp_url"], order_id)
+            out = (
+                await dev.call_tool(
+                    "get_test_report", {"run_id": run_id, "agent_reports": {"1": said}}
+                )
+            ).structured_content
+    finally:
+        controller.close()
+    assert (out["result"], out["scenario"]) == ("PASS", MID)
+    [t] = json.loads(out["report"])["observed"]["per_trial"]
+    assert (t["verdict"], t["fault_fired"], t["refunds"]) == ("correct", True, 1)
+    assert t["fault_record"]["notifications_forwarded"] >= 1
