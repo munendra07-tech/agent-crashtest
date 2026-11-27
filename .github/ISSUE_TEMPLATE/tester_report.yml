@@ -13,6 +13,13 @@ body:
         **Do not paste secrets, API keys, tokens (including the control token in
         `.crashtest-stack.json`), customer data or private paths you don't want public.**
 
+  - type: markdown
+    attributes:
+      value: >-
+        Each choice below starts on its most cautious option ("Not run", "Self-test only",
+        "No" to quoting). Change every one that applies, so your report says what actually
+        happened.
+
   - type: dropdown
     id: submission
     attributes:
@@ -29,8 +36,8 @@ body:
     attributes:
       label: Your relation to the project
       options:
-        - Independent tester (not a maintainer or contributor of agent-crashtest)
         - Maintainer or contributor of agent-crashtest
+        - Independent tester (not a maintainer or contributor of agent-crashtest)
     validations:
       required: true
 
@@ -43,9 +50,9 @@ body:
     attributes:
       label: crashtest selftest
       options:
+        - Not run
         - Passed
         - Failed
-        - Not run
     validations:
       required: true
 
@@ -54,9 +61,9 @@ body:
     attributes:
       label: crashtest selftest --scenario refunds-cut-before-request
       options:
+        - Not run
         - Passed
         - Failed
-        - Not run
     validations:
       required: true
 
@@ -66,12 +73,12 @@ body:
       label: "Your agent or client: refunds (lost response after the commit)"
       description: The overall result of `crashtest run refunds --agent ...`, or of `crashtest verdict` if you tested by hand.
       options:
+        - Not run
         - PASS
         - WARN
         - FAIL
         - INCONCLUSIVE
         - Environment error (exit code 2)
-        - Not run
     validations:
       required: true
 
@@ -81,12 +88,12 @@ body:
       label: "Your agent or client: refunds-cut-before-request (connection cut before the request)"
       description: The overall result of `crashtest run refunds-cut-before-request --agent ...`.
       options:
+        - Not run
         - PASS
         - WARN
         - FAIL
         - INCONCLUSIVE
         - Environment error (exit code 2)
-        - Not run
     validations:
       required: true
 
@@ -206,9 +213,9 @@ body:
       label: May the maintainer quote or count your result publicly?
       description: For example in the README or a post. Nothing is quoted without your permission.
       options:
-        - Yes, with my GitHub handle
-        - Yes, anonymously
         - "No"
+        - Yes, anonymously
+        - Yes, with my GitHub handle
     validations:
       required: true
 
