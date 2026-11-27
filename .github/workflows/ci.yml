@@ -236,6 +236,12 @@ jobs:
           agent: naive
           trials: "3"
           fail-on-duplicate-effect: "false"
+      # Each Action call writes its JUnit report to the same workspace path, so each
+      # report is checked before the next call overwrites it.
+      - name: Its JUnit report records the duplicate
+        env:
+          JUNIT: ${{ steps.unsafe.outputs.junit-file }}
+        run: grep -q 'type="duplicate"' "$JUNIT"
       - name: An agent that says done after an error passes refunds alone
         id: lazy_refunds
         uses: ./
@@ -250,6 +256,14 @@ jobs:
           trials: "2"
           scenario: all
           fail-on-duplicate-effect: "false"
+      - name: Both JUnit reports exist, and the cut's records the lost refund
+        env:
+          JUNITS: ${{ steps.lazy_all.outputs.junit-file }}
+        run: |
+          set -- $JUNITS
+          test "$#" -eq 2
+          for f in "$@"; do test -f "$f"; done
+          grep -q 'type="lost"' "$2"
       - name: The stable-key agent passes both scenarios
         id: safe_all
         uses: ./
@@ -262,20 +276,15 @@ jobs:
           LAZY_REFUNDS: ${{ steps.lazy_refunds.outputs.result }}
           LAZY_ALL: ${{ steps.lazy_all.outputs.result }}
           LAZY_ALL_CODE: ${{ steps.lazy_all.outputs.exit-code }}
-          LAZY_ALL_JUNIT: ${{ steps.lazy_all.outputs.junit-file }}
           SAFE_ALL: ${{ steps.safe_all.outputs.result }}
           SAFE: ${{ steps.safe.outputs.result }}
           UNSAFE: ${{ steps.unsafe.outputs.result }}
           UNSAFE_CODE: ${{ steps.unsafe.outputs.exit-code }}
-          JUNIT: ${{ steps.unsafe.outputs.junit-file }}
         run: |
           test "$SAFE" = PASS
           test "$UNSAFE" = FAIL
           test "$UNSAFE_CODE" = 1
-          grep -q 'type="duplicate"' "$JUNIT"
           test "$LAZY_REFUNDS" = PASS
           test "$LAZY_ALL" = FAIL
           test "$LAZY_ALL_CODE" = 1
           test "$SAFE_ALL" = PASS
-          for f in $LAZY_ALL_JUNIT; do test -f "$f"; done
-          grep -q 'type="lost"' "$GITHUB_WORKSPACE/crashtest-junit-refunds-cut-before-request.xml"
