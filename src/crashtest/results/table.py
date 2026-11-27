@@ -1,6 +1,6 @@
 """The results tables: refund counts and verdicts, from the published results files.
 
-    python -m crashtest.results.table --summary   # the table in README.md
+    python -m crashtest.results.table --summary   # the table in docs/research.md
     python -m crashtest.results.table             # every cell: docs/results.md
 
 Only the run files listed in `results/PUBLIC_RUNS.txt` are read, never a glob, and
@@ -198,14 +198,15 @@ def summary_table(repo: Path = REPO) -> str:
     ]
     for r in rows:
         number, doc = EXPERIMENTS[r.experiment]
+        link = f"experiments/{Path(doc).name}"  # relative to docs/research.md
         lines.append(
-            f"| [{number}]({doc}) | {r.os} | {_cond(r.condition)} | {len(r.files)} | {r.trials} | "
+            f"| [{number}]({link}) | {r.os} | {_cond(r.condition)} | {len(r.files)} | {r.trials} | "
             f"{r.once} | {r.more} | {r.none} | {_verdicts(r.verdicts)}"
             f"{' (recorded)' if r.experiment in RECORDED_ONLY else ''} | "
             f"{'-' if r.experiment in RECORDED_ONLY else r.differs} |"
         )
     lines += _footer(unjudged)
-    lines.append("Per cell, with notes on 002 and 006: [docs/results.md](docs/results.md).")
+    lines.append("Per cell, with notes on 002 and 006: [results.md](results.md).")
     return "\n".join(lines) + "\n"
 
 
@@ -270,18 +271,20 @@ README_START = (
 )
 README_END = "<!-- results-table:end -->"
 RESULTS_MD = Path("docs") / "results.md"
+# The summary table lives in docs/research.md (it was in README.md until 28 Nov 2026).
+SUMMARY_MD = Path("docs") / "research.md"
 
 
 def readme_block(readme: str) -> str:
-    """The generated table inside README.md, between its two markers."""
+    """The generated table inside docs/research.md, between its two markers."""
     start = readme.index(README_START) + len(README_START)
     return readme[start : readme.index(README_END)].strip("\n") + "\n"
 
 
 def write_all(repo: Path = REPO) -> None:
-    """Regenerate docs/results.md and the table in README.md."""
+    """Regenerate docs/results.md and the table in docs/research.md."""
     (repo / RESULTS_MD).write_text(full_table(repo), encoding="utf-8", newline="\n")
-    path = repo / "README.md"
+    path = repo / SUMMARY_MD
     readme = path.read_text(encoding="utf-8")
     old = readme_block(readme)
     path.write_text(readme.replace(old, summary_table(repo), 1), encoding="utf-8", newline="")
@@ -291,8 +294,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("--summary", action="store_true", help="the README table")
-    parser.add_argument("--write", action="store_true", help="update README.md and docs/results.md")
+    parser.add_argument("--summary", action="store_true", help="the table in docs/research.md")
+    parser.add_argument(
+        "--write", action="store_true", help="update docs/research.md and docs/results.md"
+    )
     parser.add_argument("--out", type=Path, help="write here instead of standard output")
     args = parser.parse_args()
     if args.write:

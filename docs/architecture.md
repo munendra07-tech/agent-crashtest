@@ -46,7 +46,7 @@ The pieces still to add, in order:
 | Checker | Shared verdict logic for all subjects, including `in_doubt_surfaced` and `stuck` | **Done:** `src/crashtest/checker.py` |
 | Result store | PostgreSQL tables for runs and trials, replacing loose JSON files | Extends the runner. **Done:** `src/crashtest/results/` (status updated 23 November 2026) |
 
-Not in the MVP: the scoreboard site, nightly CI matrix, real-model studies, and the live demo. (23 November 2026: one real-model study was run anyway, experiment 006, and the README now has a generated results table; the scoreboard site, nightly matrix and live demo are still not built.)
+Not in the MVP: the scoreboard site, nightly CI matrix, real-model studies, and the live demo. (23 November 2026: one real-model study was run anyway, experiment 006, and the README now has a generated results table, moved to `docs/research.md` on 28 November; the scoreboard site, nightly matrix and live demo are still not built.)
 
 ## 3. Decisions
 

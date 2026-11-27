@@ -4,7 +4,7 @@ Thanks for your interest. The project is early, so the most useful contributions
 
 ## Set up
 
-[README.md](README.md) covers setup on Windows, on Linux or macOS, and with Docker. In short, on Linux or macOS:
+[docs/development.md](docs/development.md) covers setup from a clone on Windows, on Linux or macOS, and with Docker. In short, on Linux or macOS:
 
 ```bash
 python3.12 -m venv .venv && . .venv/bin/activate && pip install -e ".[dev]"

@@ -12,11 +12,17 @@ from crashtest.results import table
 REPO = Path(__file__).resolve().parents[1]
 
 
-def test_the_readme_table_matches_the_results_files():
-    readme = (REPO / "README.md").read_text(encoding="utf-8")
-    assert table.readme_block(readme) == table.summary_table(REPO), (
-        "README.md's results table is out of date: run python -m crashtest.results.table --write"
+def test_the_summary_table_matches_the_results_files():
+    research = (REPO / table.SUMMARY_MD).read_text(encoding="utf-8")
+    assert table.readme_block(research) == table.summary_table(REPO), (
+        "docs/research.md's results table is out of date: "
+        "run python -m crashtest.results.table --write"
     )
+
+
+def test_the_readme_no_longer_carries_the_results_table():
+    readme = (REPO / "README.md").read_text(encoding="utf-8")
+    assert table.README_START not in readme
 
 
 def test_docs_results_matches_the_results_files():
