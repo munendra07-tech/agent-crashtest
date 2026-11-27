@@ -15,11 +15,11 @@ python3.12 -m venv .venv && . .venv/bin/activate && pip install -e ".[dev]"
 All four must pass; CI runs the same checks.
 
 ```bash
-ruff check src tests examples
+ruff check src tests examples tools
 ```
 
 ```bash
-ruff format --check src tests examples
+ruff format --check src tests examples tools
 ```
 
 ```bash

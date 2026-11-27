@@ -1,0 +1,167 @@
+name: Reproduce a tester report
+
+# Started by hand (Actions > Reproduce a tester report > Run workflow) with the
+# setup from a Tester report: OS, Python version and the released version. It
+# installs that release from its tag into an empty environment, outside any
+# checkout, and runs the self-test and both example agents for the scenario.
+#
+# It never runs code from the report: a tester's own agent script is not fetched.
+# The outcome tells the maintainer whether the harness itself works on that setup:
+#   harness works     every self-test passed: the tester's agent is the likely subject
+#   harness fails     a self-test failed here too: a bug to reproduce and fix
+
+on:
+  workflow_dispatch:
+    inputs:
+      os:
+        description: Operating system
+        type: choice
+        options: [all, ubuntu-latest, windows-latest, macos-latest]
+        default: all
+      python:
+        description: Python version
+        type: choice
+        options: ["3.12", "3.13"]
+        default: "3.12"
+      ref:
+        description: Release tag to install (vX.Y.Z), or main
+        type: string
+        default: v0.3.0
+      scenario:
+        description: Scenario
+        type: choice
+        options: [both, refunds, refunds-cut-before-request]
+        default: both
+      issue:
+        description: Tester report issue number (optional, for the summary only)
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      os: ${{ steps.plan.outputs.os }}
+      scenarios: ${{ steps.plan.outputs.scenarios }}
+    steps:
+      - name: Check the inputs and plan the matrix
+        id: plan
+        env:
+          OS: ${{ inputs.os }}
+          REF: ${{ inputs.ref }}
+          SCENARIO: ${{ inputs.scenario }}
+          ISSUE: ${{ inputs.issue }}
+        run: |
+          # Free-text inputs are checked before anything uses them.
+          [[ "$REF" =~ ^(v[0-9]+\.[0-9]+\.[0-9]+|main)$ ]] || { echo "::error::ref must be vX.Y.Z or main"; exit 2; }
+          [[ -z "$ISSUE" || "$ISSUE" =~ ^[0-9]{1,6}$ ]] || { echo "::error::issue must be a number"; exit 2; }
+          if [ "$OS" = all ]; then
+            echo 'os=["ubuntu-latest","windows-latest","macos-latest"]' >> "$GITHUB_OUTPUT"
+          else
+            echo "os=[\"$OS\"]" >> "$GITHUB_OUTPUT"
+          fi
+          if [ "$SCENARIO" = both ]; then
+            echo 'scenarios=refunds refunds-cut-before-request' >> "$GITHUB_OUTPUT"
+          else
+            echo "scenarios=$SCENARIO" >> "$GITHUB_OUTPUT"
+          fi
+
+  reproduce:
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(needs.plan.outputs.os) }}
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      REF: ${{ inputs.ref }}
+      SCENARIOS: ${{ needs.plan.outputs.scenarios }}
+      ISSUE: ${{ inputs.issue }}
+    steps:
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ inputs.python }}
+
+      - name: Install the release into an empty environment
+        working-directory: ${{ runner.temp }}
+        run: |
+          python -m venv env
+          if [ -d env/Scripts ]; then BIN="$PWD/env/Scripts"; else BIN="$PWD/env/bin"; fi
+          echo "BIN=$BIN" >> "$GITHUB_ENV"
+          "$BIN/python" -m pip install --no-cache-dir \
+            "agent-crashtest[local] @ git+https://github.com/${GITHUB_REPOSITORY}@${REF}"
+          "$BIN/python" --version
+          "$BIN/python" -m pip show agent-crashtest | head -2
+
+      - name: Self-test and both example agents
+        working-directory: ${{ runner.temp }}
+        run: |
+          set +e
+          mkdir -p out
+          : > out/results.tsv
+          for s in $SCENARIOS; do
+            "$BIN/crashtest" selftest --scenario "$s" > "out/selftest-$s.txt" 2>&1
+            echo -e "$s\tselftest\t$?" >> out/results.tsv
+            for agent in naive stable_key; do
+              "$BIN/crashtest" run "$s" --agent "$agent" --trials 3 \
+                --format json --output "out/$s-$agent.json" > "out/$s-$agent.log" 2>&1
+              echo -e "$s\t$agent\t$?" >> out/results.tsv
+            done
+          done
+          cat out/results.tsv
+
+      - name: Classify
+        working-directory: ${{ runner.temp }}
+        env:
+          OS_NAME: ${{ matrix.os }}
+          PY: ${{ inputs.python }}
+        run: |
+          "$BIN/python" - <<'EOF'
+          import json, os
+          rows = [l.split("\t") for l in open("out/results.tsv").read().splitlines() if l]
+          results = []
+          for scenario, what, code in rows:
+              entry = {"scenario": scenario, "run": what, "exit_code": int(code)}
+              path = f"out/{scenario}-{what}.json"
+              if what != "selftest" and os.path.exists(path):
+                  entry["result"] = json.load(open(path, encoding="utf-8")).get("result")
+              results.append(entry)
+          selftests = [r for r in results if r["run"] == "selftest"]
+          works = all(r["exit_code"] == 0 for r in selftests)
+          summary = {
+              "issue": os.environ["ISSUE"] or None,
+              "os": os.environ["OS_NAME"],
+              "python": os.environ["PY"],
+              "ref": os.environ["REF"],
+              "outcome": "harness works" if works else "harness fails",
+              "results": results,
+          }
+          json.dump(summary, open("out/summary.json", "w"), indent=2)
+          lines = [
+              f"### {summary['os']}, Python {summary['python']}, {summary['ref']}: **{summary['outcome']}**",
+              "",
+              "| scenario | run | exit code | result |",
+              "|---|---|---|---|",
+              *(f"| {r['scenario']} | {r['run']} | {r['exit_code']} | {r.get('result', '')} |" for r in results),
+              "",
+          ]
+          if summary["issue"]:
+              lines.insert(1, f"For tester report #{summary['issue']}.")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
+              f.write("\n".join(lines) + "\n")
+          print(json.dumps(summary, indent=2))
+          if not works:
+              raise SystemExit("a self-test failed on this setup: the harness, not the tester's agent")
+          EOF
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: reproduce-${{ matrix.os }}-py${{ inputs.python }}
+          path: ${{ runner.temp }}/out

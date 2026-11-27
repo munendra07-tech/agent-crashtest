@@ -15,8 +15,8 @@ On Windows: `py -3.12 -m venv .venv`, then `.venv\Scripts\activate`. The `dev` e
 The same four as CI's `lint` and `test-local` jobs:
 
 ```bash
-ruff check src tests examples
-ruff format --check src tests examples
+ruff check src tests examples tools
+ruff format --check src tests examples tools
 mypy
 pytest
 ```
@@ -50,6 +50,7 @@ docker compose down -v
 | The test controller | `test_controller.py` |
 | The sink (the ground truth) | `test_sink.py` |
 | Framework examples (Pydantic AI, LangGraph; scripted models) | `test_framework_examples.py`, skipped unless `CRASHTEST_EXAMPLE_PYDANTIC_AI_PYTHON` / `CRASHTEST_EXAMPLE_LANGGRAPH_PYTHON` point at a Python with that example's requirements (`examples/frameworks/requirements-*.txt`) |
+| Triage of Tester reports (`tools/triage_report.py`, the milestone counting rules) | `test_triage_report.py` |
 | Experiment runners and results tables | `test_runner_smoke.py`, `test_crash_runners.py`, `test_results_*.py` and the rest |
 
 ## What CI runs
@@ -64,6 +65,18 @@ On every push and pull request (`.github/workflows/ci.yml`):
 - the GitHub Action.
 
 Runs on pull requests from first-time contributors wait for the maintainer's approval.
+
+## Tester reports: triage and reproduction (maintainers)
+
+Two tools, neither of which posts, labels or closes anything:
+
+- `python tools/triage_report.py` reads the issues labelled `tester-report` (through `gh`) and prints the tracker. For each report it says whether it counts toward the first milestone, with the rule that failed, or that it needs a human check. It checks three things:
+  - the form's fields;
+  - whether the pasted output supports the result the tester chose;
+  - whether the text looks like it contains a secret.
+  
+  `--file issues.json` reads a saved `gh issue list --json number,title,body,author,url,labels` instead; `--json` prints JSON. It is plain code: issue text is parsed, never acted on.
+- **Actions > Reproduce a tester report > Run workflow** (`.github/workflows/reproduce.yml`) installs a release tag into an empty environment on the reporter's OS and Python version. It runs the self-test and both example agents for the scenario, and says whether the harness works on that setup. It never runs a tester's own code.
 
 ## Rules for tests
 
