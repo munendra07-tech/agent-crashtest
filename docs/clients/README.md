@@ -7,7 +7,7 @@ Copy-ready setup for connecting an MCP client to agent-crashtest's simulated ref
 | Python `mcp` client | Streamable HTTP and stdio | [python-mcp.md](python-mcp.md) | **verified in CI** (Ubuntu, Windows, macOS) |
 | MCP Inspector, CLI mode | Streamable HTTP URL and stdio command | [mcp-inspector.md](mcp-inspector.md) | **verified in CI** (Ubuntu) |
 | MCP Inspector, web UI | Streamable HTTP URL and stdio command | [mcp-inspector.md](mcp-inspector.md) | not yet verified |
-| Claude Desktop | stdio | [claude-desktop.md](claude-desktop.md) | not yet verified |
+| Claude Desktop | stdio | [claude-desktop.md](claude-desktop.md) | verified by hand on Windows (one trial) |
 | Claude Code | stdio or Streamable HTTP (`claude mcp add`) | [claude-code.md](claude-code.md) | not yet verified |
 | VS Code, Cursor | Streamable HTTP (`mcp.json`) | [vscode-cursor.md](vscode-cursor.md) | not yet verified |
 

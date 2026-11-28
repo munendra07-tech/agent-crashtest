@@ -9,6 +9,8 @@
 - **The Action takes `scenario: refunds-cut-mid-stream`.** `scenario: all` is unchanged (refunds and the cut before the request), so existing builds do not change.
 - **The example agents ask for progress** on `issue_refund` (a no-op `progress_callback`), which the mid-stream scenario needs; the other scenarios' servers send no progress, so their results are unchanged.
 - `crashtest run --client-timeout` now defaults to the scenario's value (2 s, as before, for the first two scenarios).
+- **`crashtest serve` survives a slow PostgreSQL recovery.** After an unclean shutdown (a closed terminal, sleep or power-off), PostgreSQL first recovers its data directory, which on Windows can take longer than the 10 s that pgserver gives `pg_ctl start`; `serve` then failed with a `TimeoutExpired` traceback while the server kept starting in the background. It now says it is waiting and connects once PostgreSQL is ready (up to 3 minutes). Found in a manual Claude Desktop trial.
+- **Claude Desktop: verified by hand on Windows, one trial.** Claude Desktop (Microsoft Store) launched `crashtest mcp --stdio`, listed both tools and called `issue_refund`. The guide now gives the Store version's config location, says to merge `mcpServers` into a file that already has settings, and to switch the tool on in the chat. The trial's result, with what it does not show, is in `docs/clients/claude-desktop.md`. macOS has not been run.
 - A slow-response scenario was considered and not added: `refunds` already is one (docs/scenarios.md, docs/decisions.md).
 
 ## 0.3.1 (27 November 2026): the Action runs both scenarios, honest PASS reports, quieter output

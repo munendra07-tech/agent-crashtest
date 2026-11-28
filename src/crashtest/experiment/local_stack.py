@@ -131,6 +131,46 @@ def _wait_for_http(url: str, timeout_s: float = 30.0) -> None:
     raise RuntimeError(f"{url} did not come up within {timeout_s}s: {last_error}")
 
 
+# How long to wait for PostgreSQL to finish crash recovery after pg_ctl gave up.
+PG_RECOVERY_WAIT_S = 180.0
+
+
+def _start_postgres(pgserver, pgdata_path: Path, recovery_wait_s: float | None = None):
+    """Start (or reuse) PostgreSQL in `pgdata_path`, surviving a slow crash recovery.
+
+    pgserver waits only 10 s for `pg_ctl start`. After an unclean shutdown (a closed
+    terminal, Ctrl+C at the wrong moment) PostgreSQL first syncs and recovers the data
+    directory, which on Windows can take longer; pg_ctl then times out although the
+    server keeps starting in the background. Here we wait until postmaster.pid shows
+    a ready server and connect to it, instead of failing.
+    """
+    from pgserver.postgres_server import PostgresServer
+    from pgserver.utils import PostmasterInfo
+
+    try:
+        return pgserver.get_server(str(pgdata_path), cleanup_mode="stop")
+    except subprocess.TimeoutExpired:
+        pass
+    # pgserver cached the half-started handle; drop it so the retry builds a new one.
+    PostgresServer._instances.pop(pgdata_path, None)
+    wait_s = PG_RECOVERY_WAIT_S if recovery_wait_s is None else recovery_wait_s
+    print(
+        f"PostgreSQL is still recovering from an unclean shutdown; waiting up to {wait_s:.0f} s...",
+        file=sys.stderr,
+        flush=True,
+    )
+    deadline = time.monotonic() + wait_s
+    while time.monotonic() < deadline:
+        info = PostmasterInfo.read_from_pgdata(pgdata_path)
+        if info is not None and info.is_running() and info.status == "ready":
+            return pgserver.get_server(str(pgdata_path), cleanup_mode="stop")
+        time.sleep(1.0)
+    raise RuntimeError(
+        f"PostgreSQL in {pgdata_path} did not become ready within {wait_s:.0f} s; "
+        f"see {pgdata_path / 'log'}"
+    )
+
+
 def _wait_for_port(port: int, timeout_s: float = 30.0) -> None:
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
@@ -166,7 +206,7 @@ def local_stack(
 
     pgdata_path = Path(pgdata or os.environ.get("CRASHTEST_PGDATA", ".pgdata")).resolve()
     pgdata_path.mkdir(parents=True, exist_ok=True)
-    pg = pgserver.get_server(str(pgdata_path), cleanup_mode="stop")
+    pg = _start_postgres(pgserver, pgdata_path)
     database_url = pg.get_uri()
 
     sink_port = sink_port or _free_port()
